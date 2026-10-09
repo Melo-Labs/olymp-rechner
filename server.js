@@ -42,12 +42,17 @@ function discordConfig() {
     clientSecret: process.env.DISCORD_CLIENT_SECRET || "",
     guildId: process.env.DISCORD_GUILD_ID || "",
     roleId: process.env.DISCORD_ROLE_ID || "",
-    redirectUri: process.env.DISCORD_REDIRECT_URI || ""
+    redirectUri: process.env.DISCORD_REDIRECT_URI || "",
+    botToken: process.env.DISCORD_BOT_TOKEN || "",
+    allowedLogChannelId: process.env.DISCORD_ALLOWED_LOG_CHANNEL_ID || "",
+    deniedLogChannelId: process.env.DISCORD_DENIED_LOG_CHANNEL_ID || ""
   };
 }
 
 function configIsReady(config) {
-  return Object.values(config).every(Boolean);
+  const snowflake = /^\d{17,20}$/;
+  return Object.values(config).every(Boolean)
+    && [config.guildId, config.roleId, config.allowedLogChannelId, config.deniedLogChannelId].every(id => snowflake.test(id));
 }
 
 function appendCookie(res, cookie) {
@@ -103,7 +108,7 @@ function redirect(res, location) {
 
 function loginPage(error = "") {
   const messages = {
-    setup: "Der Discord-Login ist noch nicht konfiguriert.",
+    setup: "Der Discord-Login oder der private Log-Channel ist noch nicht konfiguriert.",
     role: "Du hast keine passende Rolle auf dem Discord-Server.",
     state: "Der Login ist abgelaufen. Bitte versuche es erneut.",
     discord: "Die Anmeldung bei Discord ist fehlgeschlagen.",
@@ -113,8 +118,8 @@ function loginPage(error = "") {
   return `<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung · Olymp Rechner</title>
 <style>
-:root{color-scheme:dark;--bg:#111311;--panel:#1c201d;--line:#353c35;--text:#f3f4ee;--muted:#a6ada4;--accent:#f0ce32;--error:#ff8d82}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 0%,#293027 0%,var(--bg) 60%);color:var(--text);font:16px/1.5 system-ui,sans-serif}.login{width:min(440px,calc(100% - 32px));padding:32px;background:var(--panel);border:1px solid var(--line);border-radius:8px}h1{margin:0 0 8px;font-size:24px}p{margin:0 0 24px;color:var(--muted)}.error{margin:0 0 18px;color:var(--error)}a{display:flex;align-items:center;justify-content:center;min-height:48px;padding:10px 16px;background:var(--accent);color:#191a15;text-decoration:none;font-weight:700;border-radius:5px}a:hover{filter:brightness(1.06)}
-</style></head><body><main class="login"><h1>Olymp Produktions Rechner</h1><p>Zum Zugriff mit Discord anmelden.</p>${message ? `<p class="error" role="alert">${message}</p>` : ""}<a href="/auth/discord">Mit Discord anmelden</a></main></body></html>`;
+:root{color-scheme:dark;--bg:#111311;--panel:#1c201d;--line:#353c35;--text:#f3f4ee;--muted:#a6ada4;--accent:#f0ce32;--error:#ff8d82}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 0%,#293027 0%,var(--bg) 60%);color:var(--text);font:16px/1.5 system-ui,sans-serif}.login{width:min(440px,calc(100% - 32px));padding:32px;background:var(--panel);border:1px solid var(--line);border-radius:8px}h1{margin:0 0 8px;font-size:24px}p{margin:0 0 24px;color:var(--muted)}.error{margin:0 0 18px;color:var(--error)}.privacy{margin:18px 0 0;font-size:12px}a{display:flex;align-items:center;justify-content:center;min-height:48px;padding:10px 16px;background:var(--accent);color:#191a15;text-decoration:none;font-weight:700;border-radius:5px}a:hover{filter:brightness(1.06)}
+</style></head><body><main class="login"><h1>Olymp Produktions Rechner</h1><p>Zum Zugriff mit Discord anmelden.</p>${message ? `<p class="error" role="alert">${message}</p>` : ""}<a href="/auth/discord">Mit Discord anmelden</a><p class="privacy">Bei erfolgreichen Anmeldungen und abgelehnten Rollenprüfungen werden Discord-Name, Profilbild, User-ID und Ergebnis je nach Ergebnis in den zugehörigen privaten Log-Channel protokolliert.</p></main></body></html>`;
 }
 
 function parseJson(text) {
@@ -182,6 +187,30 @@ async function memberHasRole(session, config) {
   const member = parseJson(await response.text());
   if (!response.ok || !Array.isArray(member?.roles)) throw new Error("Discord membership check failed");
   return member.roles.includes(config.roleId);
+}
+
+async function logDiscordAccess(user, authorized, config) {
+  const channelId = authorized ? config.allowedLogChannelId : config.deniedLogChannelId;
+  const displayName = String(user.global_name || user.username || "Unbekannt").slice(0, 80);
+  const embed = {
+    title: authorized ? "Discord-Zugriff gewährt" : "Discord-Zugriff abgelehnt",
+    color: authorized ? 0x48a868 : 0xd44c4c,
+    fields: [
+      { name: "Discord-Profil", value: `<@${user.id}>\n${displayName}\nID: ${user.id}`, inline: true },
+      { name: "Ergebnis", value: authorized ? "Verified-Rolle vorhanden" : "Verified-Rolle fehlt", inline: true }
+    ],
+    timestamp: new Date().toISOString()
+  };
+  if (user.avatar) {
+    const extension = user.avatar.startsWith("a_") ? "gif" : "png";
+    embed.thumbnail = { url: `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=128` };
+  }
+  const response = await discordFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: { "Authorization": `Bot ${config.botToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ embeds: [embed], allowed_mentions: { parse: [] } })
+  });
+  if (!response.ok) throw new Error("Discord access log webhook failed");
 }
 
 function pruneState() {
@@ -269,7 +298,9 @@ async function finishLogin(req, res, url, config) {
       sessionExpiresAt: Date.now() + SESSION_TTL,
       roleCheckedAt: 0
     };
-    if (!await memberHasRole(session, config)) {
+    const authorized = await memberHasRole(session, config);
+    await logDiscordAccess(user, authorized, config);
+    if (!authorized) {
       redirect(res, "/login?error=role");
       return;
     }
