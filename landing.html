@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Olymp – Auswahl</title>
+  <style>
+    :root {
+      --bg: #0f1113;
+      --panel: #171b1f;
+      --panel-soft: #1d242b;
+      --line: #2d353d;
+      --text: #eef3f8;
+      --muted: #9aa7b3;
+      --gold: #f9d768;
+      --gold-deep: #d4a719;
+      --shadow: rgba(0,0,0,0.28);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, rgba(249,215,104,0.18), transparent 26%), linear-gradient(160deg, #0d1014 0%, #12181d 100%);
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }
+    .wrap {
+      width: min(960px, calc(100% - 32px));
+      margin: 32px 0;
+    }
+    .title {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .eyebrow {
+      display: inline-block;
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(2.2rem, 4vw, 4rem);
+      line-height: 1.1;
+    }
+    .subtitle {
+      margin: 12px auto 0;
+      max-width: 560px;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+      margin-top: 28px;
+    }
+    .card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 300px;
+      padding: 26px 22px 22px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(29,36,43,0.96), rgba(17,20,24,0.97));
+      border: 1px solid rgba(255,255,255,0.07);
+      box-shadow: 0 18px 40px var(--shadow);
+      text-decoration: none;
+      color: inherit;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(249,215,104,0.9);
+      box-shadow: 0 22px 45px rgba(0,0,0,0.34);
+    }
+    .badge {
+      display: inline-flex;
+      align-self: flex-start;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(249,215,104,0.12);
+      border: 1px solid rgba(249,215,104,0.45);
+      color: var(--gold);
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .icon {
+      width: 72px;
+      height: 72px;
+      display: grid;
+      place-items: center;
+      border-radius: 18px;
+      background: rgba(249,215,104,0.12);
+      border: 1px solid rgba(249,215,104,0.3);
+      margin: 24px 0 18px;
+      font-size: 2.2rem;
+    }
+    h2 {
+      margin: 0;
+      font-size: clamp(1.8rem, 3vw, 2.4rem);
+    }
+    p {
+      margin: 12px 0 18px;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 1rem;
+    }
+    .cta {
+      margin-top: auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 18px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--gold) 0%, var(--gold-deep) 100%);
+      color: #111;
+      font-weight: 900;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.82rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="title">
+      <div class="eyebrow">Olymp</div>
+      <h1>Wähle deinen Bereich</h1>
+      <p class="subtitle">Hier kannst du direkt zwischen dem Produktionsrechner und dem Material-Ankauf wechseln.</p>
+    </div>
+
+    <div class="grid">
+      <a class="card" href="/produktions-rechner.html">
+        <span class="badge">Option 1</span>
+        <div class="icon" aria-hidden="true">🧮</div>
+        <h2>Rechner</h2>
+        <p>Der bestehende Produktionsrechner öffnet sich hier. Preise, Rohstoffe und Gewinnberechnungen bleiben unverändert.</p>
+        <span class="cta">Zum Rechner</span>
+      </a>
+
+      <a class="card" href="/material-ankauf.html">
+        <span class="badge">Option 2</span>
+        <div class="icon" aria-hidden="true">📦</div>
+        <h2>Material Ankauf</h2>
+        <p>Hier findest du die Übersicht für den Material-Ankauf mit schnellen Informationen zu Bedarf, Lieferumfang und Bestellhinweisen.</p>
+        <span class="cta">Zum Ankauf</span>
+      </a>
+    </div>
+  </main>
+</body>
+</html>

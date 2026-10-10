@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Olymp – Material Ankauf</title>
+  <style>
+    :root {
+      --bg: #0c1117;
+      --bg-2: #121c25;
+      --panel: rgba(20, 30, 38, 0.92);
+      --panel-strong: rgba(12, 18, 24, 0.96);
+      --line: rgba(255,255,255,0.08);
+      --line-soft: rgba(246,214,108,0.2);
+      --text: #edf6ff;
+      --muted: #b5c7d6;
+      --gold: #f7d76b;
+      --gold-deep: #d9a91d;
+      --green: #77d4a0;
+      --green-soft: rgba(119,212,160,0.12);
+      --red: #ff8b8b;
+      --shadow: rgba(0,0,0,0.36);
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      position: relative;
+      background:
+        radial-gradient(circle at 15% 15%, rgba(247, 215, 107, 0.12), transparent 18%),
+        radial-gradient(circle at 85% 20%, rgba(78, 160, 255, 0.12), transparent 22%),
+        linear-gradient(135deg, #090c11 0%, #121923 35%, #0d1720 100%);
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(rgba(255,255,255,0.015), rgba(255,255,255,0.015)),
+        repeating-linear-gradient(
+          90deg,
+          rgba(255,255,255,0.02) 0,
+          rgba(255,255,255,0.02) 1px,
+          transparent 1px,
+          transparent 42px
+        );
+      pointer-events: none;
+      opacity: 0.9;
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 52px 0 72px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--gold);
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .brand-logo {
+      width: 78px;
+      height: 78px;
+      object-fit: cover;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.9);
+      background: #000;
+      box-shadow: 0 0 0 4px rgba(255,255,255,0.04), 0 14px 26px rgba(0,0,0,0.28);
+    }
+
+    .brand-name {
+      font-size: clamp(1.6rem, 3vw, 2.35rem);
+      line-height: 1;
+      letter-spacing: 0.12em;
+      transform: translateY(2px);
+    }
+
+    .back {
+      display: none;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(3.2rem, 7vw, 7rem);
+      line-height: 0.98;
+      letter-spacing: -0.06em;
+      font-weight: 900;
+    }
+
+    .lead {
+      margin: 0 0 8px;
+      max-width: 900px;
+      color: rgba(220, 230, 238, 0.9);
+      line-height: 1.5;
+      font-size: clamp(1.05rem, 1.6vw, 1.35rem);
+    }
+
+    .form-shell {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+      margin-top: 22px;
+      max-width: 900px;
+      align-items: start;
+    }
+
+    .card {
+      position: relative;
+      padding: 20px 18px 18px;
+      background: linear-gradient(180deg, rgba(22, 33, 42, 0.96), rgba(15, 23, 30, 0.98));
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 26px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.28);
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(247, 215, 107, 0.8), transparent);
+    }
+
+    .card h2 {
+      margin: 0 0 14px;
+      font-size: 1.4rem;
+      letter-spacing: -0.03em;
+    }
+
+    .card p, .card li {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .highlight {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 180px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(34, 58, 49, 0.9), rgba(21, 39, 32, 0.9));
+      border: 1px solid rgba(119, 212, 160, 0.35);
+      color: #aef3c8;
+      font-size: 0.78rem;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-left: auto;
+    }
+
+    .order-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .order-logo {
+      width: 74px;
+      height: 74px;
+      object-fit: cover;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.8);
+      background: #000;
+      box-shadow: 0 0 0 4px rgba(255,255,255,0.04);
+    }
+
+    form {
+      display: grid;
+      gap: 18px;
+      margin-top: 8px;
+    }
+
+    .field {
+      display: grid;
+      gap: 10px;
+    }
+
+    label {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: rgba(244, 245, 246, 0.9);
+    }
+
+    input {
+      width: 100%;
+      padding: 18px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.06);
+      background: rgba(7, 9, 12, 0.7);
+      color: var(--text);
+      font: inherit;
+      font-size: 1.05rem;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+    }
+
+    input:hover {
+      border-color: rgba(247, 215, 107, 0.32);
+    }
+
+    input:focus {
+      outline: none;
+      border-color: rgba(247, 215, 107, 0.8);
+      box-shadow: 0 0 0 4px rgba(247, 215, 107, 0.12);
+      transform: translateY(-1px);
+    }
+
+    .summary {
+      display: grid;
+      gap: 12px;
+      padding: 18px 18px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(247, 215, 107, 0.2);
+      background: linear-gradient(180deg, rgba(247, 215, 107, 0.06), rgba(247, 215, 107, 0.02));
+    }
+
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      color: rgba(223,234,244,0.9);
+      font-size: 1rem;
+      line-height: 1.4;
+    }
+
+    .summary-row strong {
+      color: var(--text);
+      font-weight: 800;
+    }
+
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 15px 18px;
+      border: 0;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--gold) 0%, var(--gold-deep) 100%);
+      color: #111;
+      font-weight: 900;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      box-shadow: 0 14px 28px rgba(217, 169, 29, 0.3);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      width: 100%;
+    }
+
+    .cta:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 32px rgba(217, 169, 29, 0.38);
+    }
+
+    .status {
+      min-height: 24px;
+      font-size: 0.92rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .status.error {
+      color: var(--red);
+    }
+
+    .status.success {
+      color: var(--green);
+    }
+
+    .secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 20px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      text-decoration: none;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-weight: 700;
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .secondary:hover {
+      transform: translateY(-1px);
+      border-color: rgba(247,215,107,0.45);
+    }
+
+    aside.card {
+      display: none;
+    }
+
+    @media (max-width: 760px) {
+      .wrap {
+        padding-top: 30px;
+      }
+
+      .topbar {
+        flex-wrap: wrap;
+      }
+
+      .card {
+        padding: 20px 16px 18px;
+      }
+
+      .summary-row {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="topbar">
+      <div class="brand" aria-label="Olymp logo">
+        <img class="brand-logo" src="/img/Ischia-famq.png" alt="Ischia FamQ Logo">
+        <span class="brand-name">OLYMP</span>
+      </div>
+    </div>
+
+    <h1>Material Ankauf</h1>
+    <p class="lead">Bitte fülle das Formular aus. Der Gesamtpreis wird automatisch berechnet: technische Materialien kosten 250 $ pro Stück, medizinische Materialien 150 $ pro Stück.</p>
+
+    <div class="form-shell">
+      <section class="card">
+        <div class="order-header">
+          <img class="order-logo" src="/img/Ischia-famq.png" alt="Ischia FamQ Logo">
+          <span class="highlight">Bestellung</span>
+        </div>
+        <h2>Materialerfassung</h2>
+
+        <form id="order-form">
+          <div class="field">
+            <label for="technical">Technische Materialien</label>
+            <input id="technical" name="technical" type="number" min="0" step="250" value="0" required>
+          </div>
+
+          <div class="field">
+            <label for="medical">Medizinische Materialien</label>
+            <input id="medical" name="medical" type="number" min="0" step="250" value="0" required>
+          </div>
+
+          <div class="field">
+            <label for="phone">Handynummer / IC</label>
+            <input id="phone" name="phone" type="tel" placeholder="Deine IC-Handynummer" required>
+          </div>
+
+          <div class="field">
+            <label for="total-materials">Gesamtanzahl Materialien</label>
+            <input id="total-materials" type="number" value="0" readonly>
+          </div>
+
+          <div class="summary">
+            <div class="summary-row"><span>Technische Materialien</span><strong id="summary-technical">0 × 250 $ = 0 $</strong></div>
+            <div class="summary-row"><span>Medizinische Materialien</span><strong id="summary-medical">0 × 150 $ = 0 $</strong></div>
+            <div class="summary-row"><span>Gesamtpreis</span><strong id="summary-total">0 $</strong></div>
+          </div>
+
+          <button class="cta" type="submit">Bestellung senden</button>
+          <div id="status" class="status" aria-live="polite"></div>
+        </form>
+      </section>
+
+      <aside class="card">
+        <span class="highlight">Info</span>
+        <h2>Hinweise</h2>
+        <ul>
+          <li>Technische Materialien: 250 $ pro Stück</li>
+          <li>Medizinische Materialien: 150 $ pro Stück</li>
+          <li>Gesamtpreis wird automatisch berechnet</li>
+          <li>Abgeschlossene Bestellungen werden im Discord-Channel gepostet</li>
+          <li>Innerhalb der nächsten 24 Stunden meldet sich ein Mitarbeiter bei dir und die Bestellung wird abgeschlossen</li>
+        </ul>
+        <a class="secondary" href="/produktions-rechner.html">Zum Produktionsrechner</a>
+      </aside>
+    </div>
+  </main>
+
+  <script src="/material-ankauf.js"></script>
+</body>
+</html>

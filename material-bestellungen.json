@@ -1,0 +1,11 @@
+[
+  {
+    "createdAt": "2026-10-10T10:43:17.280Z",
+    "technical": 250,
+    "medical": 250,
+    "phone": "+49123456789",
+    "totalMaterials": 500,
+    "totalPrice": 100000,
+    "message": "📦 Neue Material-Bestellung\nTechnische Materialien: 250\nMedizinische Materialien: 250\nGesamtanzahl: 500\nHandynummer: +49123456789\nGesamtpreis: 100000 $\nZeitstempel: 10.10.2026, 12:43:17"
+  }
+]

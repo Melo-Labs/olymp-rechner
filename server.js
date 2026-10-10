@@ -27,10 +27,15 @@ const HOST = process.env.HOST || "127.0.0.1";
 const COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === "true";
 const SESSION_TTL = 8 * 60 * 60 * 1000;
 const ROLE_CHECK_TTL = 60 * 1000;
+const ORDER_CHANNEL_ID = process.env.DISCORD_ORDER_CHANNEL_ID || "1558426870465302538";
+const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
 const staticFiles = new Map([
-  ["/", "produktions-rechner.html"],
+  ["/", "landing.html"],
+  ["/index.html", "landing.html"],
+  ["/material-ankauf.html", "material-ankauf.html"],
+  ["/material-ankauf.js", "material-ankauf.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/script.js", "script.js"],
   ["/style.css", "style.css"]
@@ -210,7 +215,10 @@ async function logDiscordAccess(user, authorized, config) {
     headers: { "Authorization": `Bot ${config.botToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ embeds: [embed], allowed_mentions: { parse: [] } })
   });
-  if (!response.ok) throw new Error("Discord access log webhook failed");
+  if (!response.ok) {
+    const error = parseJson(await response.text());
+    throw new Error(`Discord access log failed (${response.status}, code ${error?.code ?? "unknown"}): ${String(error?.message || "unknown response").slice(0, 200)}`);
+  }
 }
 
 function pruneState() {
@@ -353,10 +361,153 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+function saveMaterialOrderLocally(order) {
+  const logPath = path.join(ROOT, "material-bestellungen.json");
+  let list = [];
+  try {
+    if (fs.existsSync(logPath)) {
+      const existing = fs.readFileSync(logPath, "utf8");
+      list = JSON.parse(existing || "[]");
+      if (!Array.isArray(list)) list = [];
+    }
+  } catch {
+    list = [];
+  }
+
+  list.push({
+    createdAt: new Date().toISOString(),
+    ...order
+  });
+
+  fs.writeFileSync(logPath, JSON.stringify(list, null, 2), "utf8");
+  return logPath;
+}
+
+async function postToDiscordChannel(orderMessage) {
+  const config = discordConfig();
+  if (ORDER_WEBHOOK_URL) {
+    const response = await discordFetch(ORDER_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: orderMessage, allowed_mentions: { parse: [] } })
+    });
+    const data = parseJson(await response.text());
+    if (!response.ok) {
+      throw new Error(data?.message || "Webhook-Request fehlgeschlagen.");
+    }
+    return { method: "webhook" };
+  }
+
+  if (config.botToken) {
+    const response = await discordFetch(`https://discord.com/api/v10/channels/${encodeURIComponent(ORDER_CHANNEL_ID)}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bot ${config.botToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ content: orderMessage, allowed_mentions: { parse: [] } })
+    });
+    const data = parseJson(await response.text());
+    if (!response.ok) {
+      throw new Error(data?.message || "Discord-API fehlgeschlagen.");
+    }
+    return { method: "bot" };
+  }
+
+  return { method: "local-only" };
+}
+
+async function handleMaterialOrder(req, res) {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 256000) {
+      send(res, 413, JSON.stringify({ ok: false, message: "Anfrage zu groß." }), "application/json; charset=utf-8");
+      return;
+    }
+  }
+
+  let payload = {};
+  try {
+    payload = body ? JSON.parse(body) : {};
+  } catch {
+    send(res, 400, JSON.stringify({ ok: false, message: "Ungültige Formulardaten." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const technical = Number(payload.technical ?? 0);
+  const medical = Number(payload.medical ?? 0);
+  const phone = String(payload.phone || "").trim();
+
+  if (!Number.isFinite(technical) || !Number.isFinite(medical) || technical < 0 || medical < 0 || !phone) {
+    send(res, 400, JSON.stringify({ ok: false, message: "Bitte alle Felder korrekt ausfüllen." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const totalMaterials = technical + medical;
+  const totalPrice = technical * 250 + medical * 150;
+  const message = `📦 Neue Material-Bestellung\n` +
+    `Technische Materialien: ${technical}\n` +
+    `Medizinische Materialien: ${medical}\n` +
+    `Gesamtanzahl: ${totalMaterials}\n` +
+    `Handynummer: ${phone}\n` +
+    `Gesamtpreis: ${totalPrice} $\n` +
+    `Zeitstempel: ${new Date().toLocaleString("de-DE")}`;
+
+  const order = {
+    technical,
+    medical,
+    phone,
+    totalMaterials,
+    totalPrice,
+    message
+  };
+
+  try {
+    const result = await postToDiscordChannel(message);
+    if (result.method === "local-only") {
+      saveMaterialOrderLocally(order);
+      send(res, 200, JSON.stringify({
+        ok: true,
+        total: totalPrice,
+        orderCount: totalMaterials,
+        channelId: ORDER_CHANNEL_ID,
+        savedLocally: true,
+        message: "Bestellung wurde lokal gespeichert. Discord-Konfiguration fehlt noch."
+      }), "application/json; charset=utf-8");
+      return;
+    }
+
+    send(res, 200, JSON.stringify({
+      ok: true,
+      total: totalPrice,
+      orderCount: totalMaterials,
+      channelId: ORDER_CHANNEL_ID,
+      savedLocally: false,
+      message: "Bestellung wurde erfolgreich an Discord gesendet."
+    }), "application/json; charset=utf-8");
+  } catch (error) {
+    console.error("Material-Bestellung fehlgeschlagen:", error.message);
+    saveMaterialOrderLocally(order);
+    send(res, 200, JSON.stringify({
+      ok: true,
+      total: totalPrice,
+      orderCount: totalMaterials,
+      channelId: ORDER_CHANNEL_ID,
+      savedLocally: true,
+      message: "Bestellung wurde lokal gespeichert. Der Discord-Upload war nicht verfügbar."
+    }), "application/json; charset=utf-8");
+  }
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const pathname = url.pathname;
   const config = discordConfig();
+  if (req.method === "POST" && pathname === "/api/material-bestellung") {
+    await handleMaterialOrder(req, res);
+    return;
+  }
   if (req.method !== "GET" && req.method !== "HEAD") {
     send(res, 405, "Methode nicht erlaubt");
     return;
@@ -382,6 +533,10 @@ async function handleRequest(req, res) {
     if (id) sessions.delete(id);
     clearCookie(res, "olymp_session");
     redirect(res, "/login");
+    return;
+  }
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname.startsWith("/img/")) {
+    serveStatic(req, res, pathname === "/index.html" ? "/index.html" : pathname);
     return;
   }
   if (!staticFile(pathname)) {
