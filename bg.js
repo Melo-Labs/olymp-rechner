@@ -4,7 +4,23 @@
   document.body.insertBefore(bg,document.body.firstChild);
 })();
 
-if(matchMedia('(hover:hover) and (prefers-reduced-motion:no-preference)').matches){
+(function(){
+  var key='olymp-fps-saver';
+  var isFpsSaver = localStorage.getItem(key) === '1';
+  document.body.classList.toggle('fps-saver', isFpsSaver);
+  var toggle = document.getElementById('fps-saver-toggle');
+  if (toggle) {
+    toggle.checked = isFpsSaver;
+    toggle.addEventListener('change', function(){
+      var enabled = toggle.checked;
+      localStorage.setItem(key, enabled ? '1' : '0');
+      document.body.classList.toggle('fps-saver', enabled);
+      window.dispatchEvent(new CustomEvent('olymp-fps-saver-change', { detail: { enabled: enabled } }));
+    });
+  }
+})();
+
+if(matchMedia('(hover:hover) and (prefers-reduced-motion:no-preference)').matches && !document.body.classList.contains('fps-saver')){
   document.querySelectorAll('.panel').forEach(function(p){
     p.addEventListener('pointermove',function(e){
       var r=p.getBoundingClientRect();
@@ -21,7 +37,7 @@ if(matchMedia('(hover:hover) and (prefers-reduced-motion:no-preference)').matche
 
 (function(){
   var c=document.getElementById('net'),x=c.getContext('2d'),dpr=Math.min(devicePixelRatio||1,2),W,H,P=[],m={x:-999,y:-999};
-  var calm=matchMedia('(prefers-reduced-motion:reduce)').matches;
+  var calm = matchMedia('(prefers-reduced-motion:reduce)').matches || localStorage.getItem('olymp-fps-saver') === '1';
   function size(){
     W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;x.setTransform(dpr,0,0,dpr,0,0);
     var n=Math.min(110,Math.floor(W*H/14000));P=[];
@@ -46,6 +62,18 @@ if(matchMedia('(hover:hover) and (prefers-reduced-motion:no-preference)').matche
     }
     if(!calm)requestAnimationFrame(frame);
   }
+  function handleModeChange(){
+    calm = matchMedia('(prefers-reduced-motion:reduce)').matches || localStorage.getItem('olymp-fps-saver') === '1';
+    if(calm){
+      x.clearRect(0,0,W,H);
+      return;
+    }
+    if(!frame._scheduled){
+      frame._scheduled = true;
+      requestAnimationFrame(frame);
+    }
+  }
+  window.addEventListener('olymp-fps-saver-change', handleModeChange);
   addEventListener('resize',function(){size();if(calm)frame();});
   addEventListener('pointermove',function(e){m.x=e.clientX;m.y=e.clientY;});
   size();frame();

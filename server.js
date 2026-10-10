@@ -448,10 +448,30 @@ function saveMaterialOrderLocally(order) {
   return saveOrderLocally(order, "material-bestellungen.json");
 }
 
+function normalizeShopProduct(product, fallbackId = crypto.randomUUID()) {
+  const id = typeof product?.id === "string" && /^[a-f0-9-]{36}$/i.test(product.id)
+    ? product.id
+    : fallbackId;
+  const name = String(product?.name ?? "").trim();
+  const description = String(product?.description ?? "").trim();
+  const price = Number(product?.price);
+  const image = typeof product?.image === "string" ? product.image.trim() : "";
+  const active = typeof product?.active === "boolean" ? product.active : true;
+
+  return {
+    id,
+    name,
+    description,
+    price,
+    image,
+    active
+  };
+}
+
 function readShopProducts() {
-  const products = JSON.parse(fs.readFileSync(CATALOG_FILE, "utf8"));
-  if (!Array.isArray(products)) throw new Error("Shop product catalog must be a JSON array.");
-  return products;
+  const rawProducts = JSON.parse(fs.readFileSync(CATALOG_FILE, "utf8"));
+  if (!Array.isArray(rawProducts)) throw new Error("Shop product catalog must be a JSON array.");
+  return rawProducts.map((product, index) => normalizeShopProduct(product, `${index}-${crypto.randomUUID()}`));
 }
 
 function saveShopProducts(products) {
@@ -515,19 +535,21 @@ function validateShopProducts(value) {
   const products = [];
   const ids = new Set();
   for (const entry of value) {
-    const name = String(entry?.name || "").trim();
-    const description = String(entry?.description || "").trim();
-    const price = Number(entry?.price);
-    const id = typeof entry?.id === "string" && /^[a-f0-9-]{36}$/i.test(entry.id)
-      ? entry.id
-      : crypto.randomUUID();
+    const product = normalizeShopProduct(entry, crypto.randomUUID());
+    const name = product.name;
+    const description = product.description;
+    const price = Number(product.price);
+    const image = typeof product.image === "string" ? product.image.trim() : "";
+    const validImage = !image
+      || /^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(image)
+      || /^https?:\/\/[^\s]+\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(image);
     if (!name || name.length > 80 || description.length > 240
       || !Number.isSafeInteger(price) || price < 1 || price > 1000000000
-      || typeof entry?.active !== "boolean" || ids.has(id)) {
-      return { error: "Produktdaten ungültig: Name, Preis, Status oder Produkt-ID prüfen." };
+      || !validImage || typeof product.active !== "boolean" || ids.has(product.id)) {
+      return { error: "Produktdaten ungültig: Name, Preis, Bild, Status oder Produkt-ID prüfen." };
     }
-    ids.add(id);
-    products.push({ id, name, description, price, active: entry.active });
+    ids.add(product.id);
+    products.push({ id: product.id, name, description, price, image, active: product.active });
   }
   return { products };
 }
@@ -548,6 +570,7 @@ function describeCatalogChanges(previous, updated) {
     if (oldProduct.name !== product.name) differences.push(`Name: „${auditText(oldProduct.name)}“ → „${auditText(product.name)}“`);
     if (oldProduct.description !== product.description) differences.push(`Beschreibung: „${auditText(oldProduct.description || "—")}“ → „${auditText(product.description || "—")}“`);
     if (oldProduct.price !== product.price) differences.push(`Preis: ${oldProduct.price.toLocaleString("de-DE")} $ → ${product.price.toLocaleString("de-DE")} $`);
+    if (oldProduct.image !== product.image) differences.push(`Bild: ${oldProduct.image ? "vorhanden" : "kein Bild"} → ${product.image ? "vorhanden" : "kein Bild"}`);
     if (oldProduct.active !== product.active) differences.push(`Status: ${oldProduct.active ? "aktiv" : "inaktiv"} → ${product.active ? "aktiv" : "inaktiv"}`);
     if (differences.length) changes.push(`✏️ Geändert: **${auditText(product.name)}** — ${differences.join("; ")}`);
   }
@@ -1168,7 +1191,7 @@ async function handleRequest(req, res) {
     try {
       const products = readShopProducts()
         .filter(product => product.active)
-        .map(({ id, name, description, price }) => ({ id, name, description, price }));
+        .map(({ id, name, description, price, image }) => ({ id, name, description, price, image }));
       send(res, 200, JSON.stringify({ ok: true, products }), "application/json; charset=utf-8");
     } catch (error) {
       console.error("Shop-Katalog konnte nicht gelesen werden:", error.message);

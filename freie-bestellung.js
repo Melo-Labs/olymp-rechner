@@ -7,6 +7,7 @@ const statusBox = document.getElementById('custom-status');
 const customStatus = document.getElementById('custom-item-status');
 const icNameInput = document.getElementById('custom-ic-name');
 const phoneInput = document.getElementById('custom-phone');
+const shopSearchInput = document.getElementById('shop-search');
 const submitButton = form.querySelector('[type="submit"]');
 const numberFormatter = new Intl.NumberFormat('de-DE');
 const MAX_ITEMS = 10;
@@ -36,31 +37,63 @@ function addToCart(item) {
   return true;
 }
 
+function getVisibleProducts() {
+  const query = (shopSearchInput?.value || '').trim().toLowerCase();
+  if (!query) return products;
+  return products.filter(product => {
+    const haystack = `${product.name || ''} ${product.description || ''}`.toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
 function renderProducts() {
   productsContainer.replaceChildren();
-  if (!products.length) {
+  const visibleProducts = getVisibleProducts();
+  if (!visibleProducts.length) {
     const empty = document.createElement('p');
     empty.className = 'empty-state';
-    empty.textContent = 'Aktuell sind noch keine Produkte verfügbar. Du kannst unten eine freie Wunschanfrage hinzufügen.';
+    empty.textContent = 'Keine Produkte gefunden. Versuche eine andere Suche oder füge einen Wunsch hinzu.';
     productsContainer.append(empty);
     return;
   }
 
-  products.forEach(product => {
+  visibleProducts.forEach(product => {
     const card = document.createElement('article');
     card.className = 'shop-product';
+
+    const visual = document.createElement('div');
+    visual.className = 'product-visual';
+    if (product.image) {
+      const image = document.createElement('img');
+      image.src = product.image;
+      image.alt = product.name;
+      visual.append(image);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'product-visual-placeholder';
+      placeholder.textContent = (product.name || 'P').slice(0, 2).toUpperCase();
+      visual.append(placeholder);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'product-body';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'product-title-row';
     const title = document.createElement('h3');
     title.textContent = product.name;
-    card.append(title);
-    if (product.description) {
-      const description = document.createElement('p');
-      description.textContent = product.description;
-      card.append(description);
-    }
     const price = document.createElement('strong');
     price.className = 'shop-price';
     price.textContent = formatPrice(product.price);
-    card.append(price);
+    titleRow.append(title, price);
+
+    body.append(titleRow);
+    if (product.description) {
+      const description = document.createElement('p');
+      description.textContent = product.description;
+      body.append(description);
+    }
+
     const addButton = document.createElement('button');
     addButton.className = 'shop-add';
     addButton.type = 'button';
@@ -68,7 +101,8 @@ function renderProducts() {
     addButton.addEventListener('click', () => {
       addToCart({ type: 'catalog', productId: product.id, name: product.name, pricePerItem: product.price, quantity: 1 });
     });
-    card.append(addButton);
+
+    card.append(visual, body, addButton);
     productsContainer.append(card);
   });
 }
@@ -208,6 +242,8 @@ async function loadProducts() {
     productsContainer.append(message);
   }
 }
+
+shopSearchInput.addEventListener('input', renderProducts);
 
 renderCart();
 loadProducts();
