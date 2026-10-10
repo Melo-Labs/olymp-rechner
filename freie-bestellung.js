@@ -41,7 +41,7 @@ function getVisibleProducts() {
   const query = (shopSearchInput?.value || '').trim().toLowerCase();
   if (!query) return products;
   return products.filter(product => {
-    const haystack = `${product.name || ''} ${product.description || ''}`.toLowerCase();
+    const haystack = `${product.name || ''} ${product.description || ''} ${product.category || ''}`.toLowerCase();
     return haystack.includes(query);
   });
 }
@@ -57,53 +57,86 @@ function renderProducts() {
     return;
   }
 
-  visibleProducts.forEach(product => {
-    const card = document.createElement('article');
-    card.className = 'shop-product';
+  const grouped = new Map();
+  for (const product of visibleProducts) {
+    const categoryName = product.category || 'Allgemein';
+    if (!grouped.has(categoryName)) grouped.set(categoryName, []);
+    grouped.get(categoryName).push(product);
+  }
 
-    const visual = document.createElement('div');
-    visual.className = 'product-visual';
-    if (product.image) {
-      const image = document.createElement('img');
-      image.src = product.image;
-      image.alt = product.name;
-      visual.append(image);
-    } else {
-      const placeholder = document.createElement('div');
-      placeholder.className = 'product-visual-placeholder';
-      placeholder.textContent = (product.name || 'P').slice(0, 2).toUpperCase();
-      visual.append(placeholder);
-    }
+  const sortedCategories = [...grouped.keys()].sort((a, b) => {
+    if (a === 'Allgemein') return -1;
+    if (b === 'Allgemein') return 1;
+    return a.localeCompare(b, 'de', { sensitivity: 'base' });
+  });
 
-    const body = document.createElement('div');
-    body.className = 'product-body';
+  sortedCategories.forEach(categoryName => {
+    const group = document.createElement('div');
+    group.className = 'shop-category-group';
 
-    const titleRow = document.createElement('div');
-    titleRow.className = 'product-title-row';
-    const title = document.createElement('h3');
-    title.textContent = product.name;
-    const price = document.createElement('strong');
-    price.className = 'shop-price';
-    price.textContent = formatPrice(product.price);
-    titleRow.append(title, price);
+    const heading = document.createElement('h3');
+    heading.className = 'shop-category-title';
+    heading.textContent = categoryName;
+    group.append(heading);
 
-    body.append(titleRow);
-    if (product.description) {
-      const description = document.createElement('p');
-      description.textContent = product.description;
-      body.append(description);
-    }
+    const list = document.createElement('div');
+    list.className = 'shop-category-list';
 
-    const addButton = document.createElement('button');
-    addButton.className = 'shop-add';
-    addButton.type = 'button';
-    addButton.textContent = 'In den Warenkorb';
-    addButton.addEventListener('click', () => {
-      addToCart({ type: 'catalog', productId: product.id, name: product.name, pricePerItem: product.price, quantity: 1 });
-    });
+    grouped.get(categoryName)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'de', { sensitivity: 'base' }))
+      .forEach(product => {
+const isAvailable = Boolean(product.available);
+        const card = document.createElement('article');
+        card.className = `shop-product${isAvailable ? '' : ' out-of-stock'}`;
 
-    card.append(visual, body, addButton);
-    productsContainer.append(card);
+        const visual = document.createElement('div');
+        visual.className = 'product-visual';
+        if (product.image) {
+          const image = document.createElement('img');
+          image.src = product.image;
+          image.alt = product.name;
+          visual.append(image);
+        } else {
+          const placeholder = document.createElement('div');
+          placeholder.className = 'product-visual-placeholder';
+          placeholder.textContent = (product.name || 'P').slice(0, 2).toUpperCase();
+          visual.append(placeholder);
+        }
+
+        const body = document.createElement('div');
+        body.className = 'product-body';
+
+        const titleRow = document.createElement('div');
+        titleRow.className = 'product-title-row';
+        const title = document.createElement('h3');
+        title.textContent = product.name;
+        const price = document.createElement('strong');
+        price.className = 'shop-price';
+        price.textContent = formatPrice(product.price);
+        titleRow.append(title, price);
+
+        body.append(titleRow);
+        const availability = document.createElement('p');
+        availability.className = 'product-stock';
+        availability.textContent = isAvailable ? 'Verfügbar' : 'Ausverkauft';
+        body.append(availability);
+
+        const addButton = document.createElement('button');
+        addButton.className = 'shop-add';
+        addButton.type = 'button';
+        addButton.disabled = !isAvailable;
+        addButton.textContent = isAvailable ? 'In den Warenkorb' : 'Ausverkauft';
+        addButton.addEventListener('click', () => {
+          if (!isAvailable) return;
+          addToCart({ type: 'catalog', productId: product.id, name: product.name, pricePerItem: product.price, quantity: 1 });
+        });
+
+        card.append(visual, body, addButton);
+        list.append(card);
+      });
+
+    group.append(list);
+    productsContainer.append(group);
   });
 }
 

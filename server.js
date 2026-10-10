@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+const Database = require("better-sqlite3");
 const { verifyKey } = require("discord-interactions");
 
 function loadEnvFile() {
@@ -22,7 +23,6 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-const ROOT = __dirname;
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "127.0.0.1";
 const COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === "true";
@@ -32,8 +32,61 @@ const ORDER_CHANNEL_ID = process.env.DISCORD_ORDER_CHANNEL_ID || "15584268704653
 const STANK_ORDER_CHANNEL_ID = "1558497954921193592";
 const CUSTOM_ORDER_CHANNEL_ID = "1558508937400291338";
 const CATALOG_AUDIT_CHANNEL_ID = "1558539114662330419";
-const CATALOG_FILE = path.join(__dirname, "shop-products.json");
-const CATALOG_AUDIT_PENDING_FILE = path.join(__dirname, "shop-audit-pending.json");
+const ROOT = __dirname;
+const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
+const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
+
+function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
+  const configured = process.env[envKey]?.trim();
+  const target = configured ? (path.isAbsolute(configured) ? configured : path.resolve(ROOT, configured)) : path.join(ROOT, fallbackPath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+
+  if (!fs.existsSync(target)) {
+    if (legacyPath && fs.existsSync(legacyPath)) {
+      fs.copyFileSync(legacyPath, target);
+    } else {
+      fs.writeFileSync(target, envKey === "CATALOG_FILE" ? "[]" : "[]", "utf8");
+    }
+  }
+  return target;
+}
+
+const CATALOG_FILE = resolvePersistentDataFile("CATALOG_FILE", "data/shop-products.json", LEGACY_CATALOG_FILE);
+const CATALOG_AUDIT_PENDING_FILE = resolvePersistentDataFile("CATALOG_AUDIT_PENDING_FILE", "data/shop-audit-pending.json", LEGACY_CATALOG_AUDIT_PENDING_FILE);
+const ADMIN_ORDERS_FILE = resolvePersistentDataFile("ADMIN_ORDERS_FILE", "data/admin-orders.json", null);
+const CATALOG_DB_FILE = process.env.CATALOG_DB_FILE
+  ? (path.isAbsolute(process.env.CATALOG_DB_FILE) ? process.env.CATALOG_DB_FILE : path.resolve(ROOT, process.env.CATALOG_DB_FILE))
+  : path.join(ROOT, "data", "shop-products.db");
+fs.mkdirSync(path.dirname(CATALOG_DB_FILE), { recursive: true });
+const catalogDb = new Database(CATALOG_DB_FILE);
+catalogDb.pragma("journal_mode = WAL");
+catalogDb.exec(`
+  CREATE TABLE IF NOT EXISTS catalog_products (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    price INTEGER NOT NULL,
+    image TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'Allgemein',
+    stock INTEGER NOT NULL DEFAULT 0,
+    available INTEGER NOT NULL DEFAULT 1,
+    active INTEGER NOT NULL DEFAULT 1
+  );
+`);
+function ensureCatalogProductColumns() {
+  const columns = catalogDb.prepare("PRAGMA table_info(catalog_products)").all();
+  const existing = new Set(columns.map(column => column.name));
+  const additions = [
+    ["category", "TEXT NOT NULL DEFAULT 'Allgemein'"],
+    ["stock", "INTEGER NOT NULL DEFAULT 0"],
+    ["available", "INTEGER NOT NULL DEFAULT 1"]
+  ];
+  for (const [name, definition] of additions) {
+    if (existing.has(name)) continue;
+    catalogDb.exec(`ALTER TABLE catalog_products ADD COLUMN ${name} ${definition};`);
+  }
+}
+ensureCatalogProductColumns();
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
@@ -49,6 +102,8 @@ const staticFiles = new Map([
   ["/freie-bestellung.js", "freie-bestellung.js"],
   ["/admin/catalog", "catalog-admin.html"],
   ["/admin/catalog.js", "catalog-admin.js"],
+  ["/admin/orders", "admin-orders.html"],
+  ["/admin/orders.js", "admin-orders.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/script.js", "script.js"],
   ["/style.css", "style.css"],
@@ -138,7 +193,7 @@ function redirect(res, location) {
   res.end();
 }
 
-function loginPage(error = "", title = "Produktionsrechner") {
+function loginPage(error = "", title = "Produktionsrechner", redirectPath = "/produktions-rechner.html") {
   const messages = {
     setup: "Der Discord-Login oder der private Log-Channel ist noch nicht konfiguriert.",
     role: "Du hast keine passende Rolle auf dem Discord-Server.",
@@ -147,6 +202,8 @@ function loginPage(error = "", title = "Produktionsrechner") {
     cancelled: "Die Discord-Anmeldung wurde abgebrochen."
   };
   const message = messages[error] || "";
+  const adminPath = redirectPath === "/admin/catalog" || redirectPath === "/admin/orders" ? redirectPath : "/admin/orders";
+  const authHref = title === "Admin Panel" ? `/auth/discord?next=${encodeURIComponent(adminPath)}` : "/auth/discord";
   return `<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung</title>
 <link rel="stylesheet" href="/theme.css">
@@ -158,7 +215,7 @@ h1{margin:0 0 8px;font:700 24px/1.2 var(--display);letter-spacing:.05em;text-sha
 p{margin:0 0 24px;color:var(--muted)}.error{margin:0 0 18px;color:var(--error)}
 a{display:flex;align-items:center;justify-content:center;min-height:48px;padding:10px 16px;background:linear-gradient(135deg,#f4f6f9,#aeb6c1);color:#0a0a0b;text-decoration:none;font-weight:600;letter-spacing:.04em;border-radius:6px;transition:box-shadow .2s}
 a:hover{box-shadow:0 0 26px rgba(228,232,238,.4)}
-</style></head><body><main class="login"><h1>${title}</h1><p>Zum Zugriff mit Discord anmelden.</p>${message ? `<p class="error" role="alert">${message}</p>` : ""}<a href="${title === "Admin Panel" ? "/auth/discord?next=%2Fadmin%2Fcatalog" : "/auth/discord"}">Mit Discord anmelden</a></main><script src="/bg.js"></script></body></html>`;
+</style></head><body><main class="login"><h1>${title}</h1><p>Zum Zugriff mit Discord anmelden.</p>${message ? `<p class="error" role="alert">${message}</p>` : ""}<a href="${authHref}">Mit Discord anmelden</a></main><script src="/bg.js"></script></body></html>`;
 }
 
 function parseJson(text) {
@@ -306,7 +363,9 @@ function safeEqual(left, right) {
 async function beginLogin(req, res, config) {
   if (!configIsReady(config)) {
     const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-    send(res, 503, loginPage("setup", loginUrl.searchParams.get("next") === "/admin/catalog" ? "Admin Panel" : "Produktionsrechner"), "text/html; charset=utf-8");
+    const requestedDestination = loginUrl.searchParams.get("next");
+    const isAdmin = requestedDestination === "/admin/catalog" || requestedDestination === "/admin/orders";
+    send(res, 503, loginPage("setup", isAdmin ? "Admin Panel" : "Produktionsrechner", requestedDestination || "/admin/orders"), "text/html; charset=utf-8");
     return;
   }
   pruneState();
@@ -315,7 +374,7 @@ async function beginLogin(req, res, config) {
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const requestedDestination = loginUrl.searchParams.get("next");
-  const redirectPath = requestedDestination === "/admin/catalog" ? requestedDestination : "";
+  const redirectPath = requestedDestination === "/admin/catalog" || requestedDestination === "/admin/orders" ? requestedDestination : "";
   pendingLogins.set(state, { verifier, redirectPath, expiresAt: Date.now() + 10 * 60 * 1000 });
   appendCookie(res, makeCookie("olymp_oauth_state", state, 600));
   const query = new URLSearchParams({
@@ -453,32 +512,99 @@ function normalizeShopProduct(product, fallbackId = crypto.randomUUID()) {
     ? product.id
     : fallbackId;
   const name = String(product?.name ?? "").trim();
-  const description = String(product?.description ?? "").trim();
   const price = Number(product?.price);
   const image = typeof product?.image === "string" ? product.image.trim() : "";
+  const category = String(product?.category ?? "").trim() || "Allgemein";
+  const available = typeof product?.available === "boolean" ? product.available : true;
   const active = typeof product?.active === "boolean" ? product.active : true;
 
   return {
     id,
     name,
-    description,
     price,
     image,
+    category,
+    available: Boolean(available) && active,
     active
   };
 }
 
+function migrateLegacyCatalogToDatabase() {
+  const count = catalogDb.prepare("SELECT COUNT(*) AS count FROM catalog_products").get().count;
+  if (count > 0) return;
+  const legacyInventoryPath = CATALOG_FILE;
+  if (!fs.existsSync(legacyInventoryPath)) return;
+  let legacyProducts;
+  try {
+    legacyProducts = JSON.parse(fs.readFileSync(legacyInventoryPath, "utf8"));
+  } catch (error) {
+    console.warn("Legacy catalog could not be parsed, skipping migration:", error.message);
+    return;
+  }
+  if (!Array.isArray(legacyProducts)) return;
+  const insert = catalogDb.prepare(`
+    INSERT INTO catalog_products (id, name, price, image, category, available, active)
+    VALUES (@id, @name, @price, @image, @category, @available, @active)
+  `);
+  const saveTx = catalogDb.transaction((products) => {
+    for (const product of products) {
+      insert.run({
+        id: String(product.id || crypto.randomUUID()),
+        name: String(product.name || ""),
+        price: Number(product.price),
+        image: String(product.image || ""),
+        category: String(product.category || "Allgemein"),
+        available: product.available ? 1 : 0,
+        active: product.active ? 1 : 0
+      });
+    }
+  });
+  saveTx(legacyProducts);
+}
+
 function readShopProducts() {
-  const rawProducts = JSON.parse(fs.readFileSync(CATALOG_FILE, "utf8"));
-  if (!Array.isArray(rawProducts)) throw new Error("Shop product catalog must be a JSON array.");
-  return rawProducts.map((product, index) => normalizeShopProduct(product, `${index}-${crypto.randomUUID()}`));
+  const rows = catalogDb.prepare("SELECT id, name, price, image, category, available, active FROM catalog_products ORDER BY rowid ASC").all();
+  return rows.map((row) => normalizeShopProduct({
+    id: row.id,
+    name: row.name,
+    price: row.price,
+    image: row.image,
+    category: row.category,
+    available: Boolean(row.available),
+    active: Boolean(row.active)
+  }, row.id));
 }
 
 function saveShopProducts(products) {
-  const temporaryFile = `${CATALOG_FILE}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(temporaryFile, JSON.stringify(products, null, 2), { encoding: "utf8", flag: "wx" });
-  fs.renameSync(temporaryFile, CATALOG_FILE);
+  const upsert = catalogDb.prepare(`
+    INSERT INTO catalog_products (id, name, price, image, category, available, active)
+    VALUES (@id, @name, @price, @image, @category, @available, @active)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      price = excluded.price,
+      image = excluded.image,
+      category = excluded.category,
+      available = excluded.available,
+      active = excluded.active
+  `);
+  const transaction = catalogDb.transaction((entries) => {
+    catalogDb.exec("DELETE FROM catalog_products");
+    for (const product of entries) {
+      upsert.run({
+        id: String(product.id || crypto.randomUUID()),
+        name: String(product.name || ""),
+        price: Number(product.price),
+        image: String(product.image || ""),
+        category: String(product.category || "Allgemein"),
+        available: product.available ? 1 : 0,
+        active: product.active ? 1 : 0
+      });
+    }
+  });
+  transaction(products);
 }
+
+migrateLegacyCatalogToDatabase();
 
 async function requireCatalogAdmin(req, res, config) {
   const deny = (status, message) => {
@@ -508,7 +634,7 @@ async function requireCatalogAdmin(req, res, config) {
   }
   if (!session) {
     if (String(req.headers.accept || "").includes("text/html")) {
-      redirect(res, "/login?admin=1");
+      redirect(res, "/login?admin=1&next=/admin/orders");
     } else {
       send(res, 401, JSON.stringify({ ok: false, message: "Bitte melde dich mit deinem Discord-Admin-Konto an." }), "application/json; charset=utf-8");
     }
@@ -537,21 +663,88 @@ function validateShopProducts(value) {
   for (const entry of value) {
     const product = normalizeShopProduct(entry, crypto.randomUUID());
     const name = product.name;
-    const description = product.description;
     const price = Number(product.price);
     const image = typeof product.image === "string" ? product.image.trim() : "";
+    const category = String(product.category || "").trim() || "Allgemein";
+    const available = typeof product.available === "boolean" ? product.available : true;
     const validImage = !image
       || /^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(image)
-      || /^https?:\/\/[^\s]+\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(image);
-    if (!name || name.length > 80 || description.length > 240
+      || /^https?:\/\/[^\s]+\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(image)
+      || /^\/img\/[^\s]+\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(image)
+      || /^\.?\.?\/[^\s]+\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(image);
+    if (!name || name.length > 80 || category.length > 40
       || !Number.isSafeInteger(price) || price < 1 || price > 1000000000
-      || !validImage || typeof product.active !== "boolean" || ids.has(product.id)) {
-      return { error: "Produktdaten ungültig: Name, Preis, Bild, Status oder Produkt-ID prüfen." };
+      || !validImage || typeof product.active !== "boolean" || typeof available !== "boolean" || ids.has(product.id)) {
+      return { error: "Produktdaten ungültig: Name, Preis, Bild, Kategorie, Verfügbarkeit, Status oder Produkt-ID prüfen." };
     }
     ids.add(product.id);
-    products.push({ id: product.id, name, description, price, image, active: product.active });
+    products.push({
+      id: product.id,
+      name,
+      price,
+      image,
+      category,
+      available: available && product.active,
+      active: product.active
+    });
   }
   return { products };
+}
+
+const ORDER_STATUS_OPTIONS = ["Neu", "In Bearbeitung", "Bestätigt", "In Produktion", "Versendet", "Abgeschlossen", "Abgelehnt"];
+
+function normalizeOrderStatus(value) {
+  const status = String(value || "").trim();
+  return ORDER_STATUS_OPTIONS.includes(status) ? status : "Neu";
+}
+
+function readAdminOrders() {
+  if (!fs.existsSync(ADMIN_ORDERS_FILE)) {
+    fs.writeFileSync(ADMIN_ORDERS_FILE, "[]", "utf8");
+    return [];
+  }
+  const raw = JSON.parse(fs.readFileSync(ADMIN_ORDERS_FILE, "utf8"));
+  if (!Array.isArray(raw)) throw new Error("Admin order data must be a JSON array.");
+  return raw.map(order => ({
+    ...order,
+    id: String(order.id || crypto.randomUUID()),
+    status: normalizeOrderStatus(order.status),
+    createdAt: order.createdAt || new Date().toISOString(),
+    updatedAt: order.updatedAt || order.createdAt || new Date().toISOString(),
+    customerName: String(order.customerName || "Unbekannt").trim(),
+    source: String(order.source || "custom").trim(),
+    total: Number(order.total || 0)
+  }));
+}
+
+function saveAdminOrders(orders) {
+  const temporaryFile = `${ADMIN_ORDERS_FILE}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryFile, JSON.stringify(orders, null, 2), { encoding: "utf8", flag: "wx" });
+  fs.renameSync(temporaryFile, ADMIN_ORDERS_FILE);
+}
+
+function recordAdminOrder(source, order) {
+  const orders = readAdminOrders();
+  const record = {
+    id: String(order.id || crypto.randomUUID()),
+    source: String(source || "custom"),
+    customerName: String(order.customerName || order.icName || "Unbekannt").trim() || "Unbekannt",
+    phone: String(order.phone || "").trim(),
+    total: Number(order.totalPrice ?? order.total ?? 0),
+    status: normalizeOrderStatus(order.status),
+    createdAt: order.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    items: Array.isArray(order.items) ? order.items.map(item => ({
+      name: String(item.name || "").trim(),
+      quantity: Number(item.quantity || 0),
+      pricePerItem: Number(item.pricePerItem || 0),
+      totalPrice: Number(item.totalPrice || 0)
+    })) : [],
+    raw: { ...order }
+  };
+  orders.unshift(record);
+  saveAdminOrders(orders);
+  return record;
 }
 
 function describeCatalogChanges(previous, updated) {
@@ -571,6 +764,8 @@ function describeCatalogChanges(previous, updated) {
     if (oldProduct.description !== product.description) differences.push(`Beschreibung: „${auditText(oldProduct.description || "—")}“ → „${auditText(product.description || "—")}“`);
     if (oldProduct.price !== product.price) differences.push(`Preis: ${oldProduct.price.toLocaleString("de-DE")} $ → ${product.price.toLocaleString("de-DE")} $`);
     if (oldProduct.image !== product.image) differences.push(`Bild: ${oldProduct.image ? "vorhanden" : "kein Bild"} → ${product.image ? "vorhanden" : "kein Bild"}`);
+    if (oldProduct.category !== product.category) differences.push(`Kategorie: ${auditText(oldProduct.category || "Allgemein")} → ${auditText(product.category || "Allgemein")}`);
+    if (oldProduct.available !== product.available) differences.push(`Verfügbar: ${oldProduct.available ? "ja" : "nein"} → ${product.available ? "ja" : "nein"}`);
     if (oldProduct.active !== product.active) differences.push(`Status: ${oldProduct.active ? "aktiv" : "inaktiv"} → ${product.active ? "aktiv" : "inaktiv"}`);
     if (differences.length) changes.push(`✏️ Geändert: **${auditText(product.name)}** — ${differences.join("; ")}`);
   }
@@ -918,6 +1113,9 @@ async function handleMaterialOrder(req, res) {
     phone,
     totalMaterials,
     totalPrice,
+    customerName: icName,
+    status: "Neu",
+    createdAt: new Date().toISOString(),
     message: `📦 Neue Material-Bestellung\n` +
       `Technische Materialien: ${technical}\n` +
       `Medizinische Materialien: ${medical}\n` +
@@ -927,6 +1125,7 @@ async function handleMaterialOrder(req, res) {
       `Gesamtpreis: ${totalPrice} $\n` +
       `Zeitstempel: ${new Date().toLocaleString("de-DE")}`
   };
+  recordAdminOrder("material", order);
   const discordPayload = buildMaterialOrderPayload(order);
 
   try {
@@ -1000,12 +1199,16 @@ async function handleStankOrder(req, res) {
     icName,
     phone,
     totalPrice,
+    customerName: icName,
+    status: "Neu",
+    createdAt: new Date().toISOString(),
     message: `🌿 Neue STANK-Bestellung\n` +
       `IC-Name: ${icName}\n` +
       `Handynummer / IC: ${phone}\n` +
       `STANK-Pflanzen: ${quantity}\n` +
       `Gesamtpreis: ${totalPrice.toLocaleString("de-DE")} $`
   };
+  recordAdminOrder("stank", order);
 
   try {
     const result = await postToDiscordChannel(
@@ -1121,10 +1324,14 @@ async function handleCustomOrder(req, res) {
     phone,
     items,
     totalPrice,
+    customerName: icName,
+    status: "Neu",
+    createdAt: new Date().toISOString(),
     message: `🛒 Neue Wunsch-Bestellung\nIC-Name: ${icName}\nHandynummer / IC: ${phone}\n` +
       items.map((item, index) => `${index + 1}. ${item.name}${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
       `\nGesamtsumme: ${totalPrice} $`
   };
+  recordAdminOrder("custom", order);
 
   try {
     const result = await postToDiscordChannel(
@@ -1190,12 +1397,57 @@ async function handleRequest(req, res) {
   if (req.method === "GET" && pathname === "/api/shop/products") {
     try {
       const products = readShopProducts()
-        .filter(product => product.active)
-        .map(({ id, name, description, price, image }) => ({ id, name, description, price, image }));
+        .filter(product => product.active && product.available)
+        .map(({ id, name, description, price, image, category, available }) => ({ id, name, description, price, image, category, available }));
       send(res, 200, JSON.stringify({ ok: true, products }), "application/json; charset=utf-8");
     } catch (error) {
       console.error("Shop-Katalog konnte nicht gelesen werden:", error.message);
       send(res, 500, JSON.stringify({ ok: false, message: "Der Produktkatalog ist momentan nicht verfügbar." }), "application/json; charset=utf-8");
+    }
+    return;
+  }
+  if ((req.method === "GET" || req.method === "PUT") && pathname === "/api/admin/orders") {
+    const adminSession = await requireCatalogAdmin(req, res, config);
+    if (!adminSession) return;
+    if (req.method === "GET") {
+      try {
+        send(res, 200, JSON.stringify({ ok: true, orders: readAdminOrders() }), "application/json; charset=utf-8");
+      } catch (error) {
+        console.error("Bestellungen konnten nicht gelesen werden:", error.message);
+        send(res, 500, JSON.stringify({ ok: false, message: "Bestellungen konnten nicht gelesen werden." }), "application/json; charset=utf-8");
+      }
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(await readRequestBody(req, 128 * 1024));
+    } catch (error) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Ungültige oder zu große Bestelldaten." }), "application/json; charset=utf-8");
+      return;
+    }
+
+    const id = String(payload?.id || "").trim();
+    const nextStatus = normalizeOrderStatus(payload?.status);
+    if (!id || !nextStatus) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Bestell-ID und Status sind erforderlich." }), "application/json; charset=utf-8");
+      return;
+    }
+
+    try {
+      const orders = readAdminOrders();
+      const index = orders.findIndex(order => String(order.id) === id);
+      if (index === -1) {
+        send(res, 404, JSON.stringify({ ok: false, message: "Bestellung nicht gefunden." }), "application/json; charset=utf-8");
+        return;
+      }
+      orders[index].status = nextStatus;
+      orders[index].updatedAt = new Date().toISOString();
+      saveAdminOrders(orders);
+      send(res, 200, JSON.stringify({ ok: true, order: orders[index] }), "application/json; charset=utf-8");
+    } catch (error) {
+      console.error("Bestellstatus konnte nicht aktualisiert werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Bestellstatus konnte nicht aktualisiert werden." }), "application/json; charset=utf-8");
     }
     return;
   }
@@ -1299,7 +1551,7 @@ async function handleRequest(req, res) {
     redirect(res, "/login");
     return;
   }
-  if (pathname === "/admin/catalog" || pathname === "/admin/catalog.js") {
+  if (pathname === "/admin/catalog" || pathname === "/admin/catalog.js" || pathname === "/admin/orders" || pathname === "/admin/orders.js") {
     const adminSession = await requireCatalogAdmin(req, res, config);
     if (!adminSession) return;
     serveStatic(req, res, pathname);

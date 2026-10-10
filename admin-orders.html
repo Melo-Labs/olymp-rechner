@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bestellverwaltung</title>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    :root{--bg:#0b0d10;--panel:#15191d;--panel-strong:#101418;--line:rgba(142,198,232,.18);--mut:#9aa4ae;--text:#edf3fb;--ok:#72d9b1;--warn:#ffd166;--bad:#ff8f8f;--accent:#8ec6e8}
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at top,rgba(142,198,232,.14),transparent 30%),var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}
+    main{max-width:1200px;margin:0 auto;padding:32px 16px 64px}
+    .topbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+    .topbar strong{letter-spacing:.08em}
+    .topbar a{color:var(--text);text-decoration:none;margin-left:auto;font-weight:700}
+    h1{margin:0 0 8px;font-size:clamp(2rem,4vw,3rem)}
+    .lead{margin:0 0 20px;color:var(--mut)}
+    .panel{padding:22px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(21,25,29,.96),rgba(10,12,14,.96));box-shadow:0 28px 34px -28px rgba(0,0,0,.9)}
+    .controls{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+    .pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:rgba(142,198,232,.06);color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+    .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+    table{width:100%;border-collapse:collapse;min-width:900px}
+    thead th{padding:12px 14px;background:rgba(142,198,232,.07);text-align:left;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+    tbody td{padding:14px;border-top:1px solid var(--line);vertical-align:top}
+    tbody tr:hover{background:rgba(142,198,232,.04)}
+    .status-select{width:100%;min-height:40px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:rgba(10,12,14,.8);color:var(--text)}
+    .badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid transparent}
+    .badge.neu{background:rgba(255,209,102,.14);border-color:rgba(255,209,102,.4);color:var(--warn)}
+    .badge.bearbeitung{background:rgba(142,198,232,.12);border-color:rgba(142,198,232,.35);color:var(--accent)}
+    .badge.bestaetigt{background:rgba(114,217,177,.12);border-color:rgba(114,217,177,.4);color:var(--ok)}
+    .badge.produktion{background:rgba(183,151,255,.12);border-color:rgba(183,151,255,.4);color:#d7c4ff}
+    .badge.versendet{background:rgba(82,145,255,.12);border-color:rgba(82,145,255,.35);color:#94b9ff}
+    .badge.abgeschlossen{background:rgba(73,192,156,.12);border-color:rgba(73,192,156,.35);color:#9ee7c7}
+    .badge.abgelehnt{background:rgba(255,143,143,.12);border-color:rgba(255,143,143,.35);color:var(--bad)}
+    .muted{color:var(--mut)}
+    .empty{padding:24px;color:var(--mut);text-align:center}
+    .status-message{margin-top:12px;color:var(--ok);min-height:22px}
+    @media(max-width:700px){table{min-width:760px}}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <strong>OLYMP · BESTELLVERWALTUNG</strong>
+      <a href="/admin/catalog">← Produktverwaltung</a>
+      <a href="/freie-bestellung.html">Zum Shop</a>
+    </div>
+    <h1>Bestellungen</h1>
+    <p class="lead">Hier verwaltest du alle eingegangenen Bestellungen und setzt den aktuellen Status.</p>
+    <section class="panel">
+      <div class="controls">
+        <div class="pill" id="order-count">0 Bestellungen</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Kunde</th>
+              <th>Typ</th>
+              <th>Zeile</th>
+              <th>Gesamt</th>
+              <th>Status</th>
+              <th>Aktualisiert</th>
+            </tr>
+          </thead>
+          <tbody id="orders-body"></tbody>
+        </table>
+      </div>
+      <p id="status-message" class="status-message" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="/admin/orders.js"></script>
+</body>
+</html>
