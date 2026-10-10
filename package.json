@@ -1,5 +1,5 @@
 {
-  "name": "olymp-produktions-rechner",
+  "name": "produktions-rechner",
   "version": "1.0.0",
   "private": true,
   "engines": {
@@ -7,5 +7,8 @@
   },
   "scripts": {
     "start": "node server.js"
+  },
+  "dependencies": {
+    "discord-interactions": "^4.4.0"
   }
 }

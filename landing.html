@@ -1,159 +1,149 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Olymp – Auswahl</title>
-  <style>
-    :root {
-      --bg: #0f1113;
-      --panel: #171b1f;
-      --panel-soft: #1d242b;
-      --line: #2d353d;
-      --text: #eef3f8;
-      --muted: #9aa7b3;
-      --gold: #f9d768;
-      --gold-deep: #d4a719;
-      --shadow: rgba(0,0,0,0.28);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: radial-gradient(circle at top, rgba(249,215,104,0.18), transparent 26%), linear-gradient(160deg, #0d1014 0%, #12181d 100%);
-      color: var(--text);
-      font-family: "Segoe UI", Tahoma, sans-serif;
-    }
-    .wrap {
-      width: min(960px, calc(100% - 32px));
-      margin: 32px 0;
-    }
-    .title {
-      text-align: center;
-      margin-bottom: 28px;
-    }
-    .eyebrow {
-      display: inline-block;
-      font-size: 11px;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--gold);
-      margin-bottom: 10px;
-      font-weight: 700;
-    }
-    h1 {
-      margin: 0;
-      font-size: clamp(2.2rem, 4vw, 4rem);
-      line-height: 1.1;
-    }
-    .subtitle {
-      margin: 12px auto 0;
-      max-width: 560px;
-      color: var(--muted);
-      font-size: 1.05rem;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 24px;
-      margin-top: 28px;
-    }
-    .card {
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      min-height: 300px;
-      padding: 26px 22px 22px;
-      border-radius: 22px;
-      background: linear-gradient(180deg, rgba(29,36,43,0.96), rgba(17,20,24,0.97));
-      border: 1px solid rgba(255,255,255,0.07);
-      box-shadow: 0 18px 40px var(--shadow);
-      text-decoration: none;
-      color: inherit;
-      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .card:hover {
-      transform: translateY(-4px);
-      border-color: rgba(249,215,104,0.9);
-      box-shadow: 0 22px 45px rgba(0,0,0,0.34);
-    }
-    .badge {
-      display: inline-flex;
-      align-self: flex-start;
-      padding: 7px 10px;
-      border-radius: 999px;
-      background: rgba(249,215,104,0.12);
-      border: 1px solid rgba(249,215,104,0.45);
-      color: var(--gold);
-      font-size: 0.74rem;
-      font-weight: 800;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
-    .icon {
-      width: 72px;
-      height: 72px;
-      display: grid;
-      place-items: center;
-      border-radius: 18px;
-      background: rgba(249,215,104,0.12);
-      border: 1px solid rgba(249,215,104,0.3);
-      margin: 24px 0 18px;
-      font-size: 2.2rem;
-    }
-    h2 {
-      margin: 0;
-      font-size: clamp(1.8rem, 3vw, 2.4rem);
-    }
-    p {
-      margin: 12px 0 18px;
-      color: var(--muted);
-      line-height: 1.6;
-      font-size: 1rem;
-    }
-    .cta {
-      margin-top: auto;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px 18px;
-      border-radius: 12px;
-      background: linear-gradient(135deg, var(--gold) 0%, var(--gold-deep) 100%);
-      color: #111;
-      font-weight: 900;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      font-size: 0.82rem;
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auswahl</title>
+<style>
+:root{
+  --void:#050505;
+  --text:#ececec;
+  --muted:#8f9298;
+  --display:"Orbitron","Eurostile","Segoe UI",sans-serif;
+  --body:"Exo 2","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html{background:var(--void)}
+body{
+  margin:0;min-height:100vh;min-height:100svh;overflow-x:hidden;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:clamp(28px,6vh,64px) 20px clamp(28px,6vh,64px);
+  color:var(--text);font-family:var(--body);
+}
+
+header{text-align:center;margin-bottom:clamp(30px,6vh,56px)}
+h1{
+  margin:0;font:900 clamp(1.7rem,4.6vw,3.4rem)/1.1 var(--display);letter-spacing:.07em;
+  text-shadow:0 0 18px rgba(255,255,255,.32),0 0 48px rgba(255,255,255,.1);
+}
+header p{margin:14px 0 0;color:var(--muted);font-size:clamp(1rem,1.5vw,1.15rem);letter-spacing:.04em}
+
+.grid{
+  width:min(1020px,100%);display:grid;grid-template-columns:1fr 1fr;
+  gap:clamp(20px,3.5vw,40px);
+}
+.slot{
+  --a:#e4e8ee;
+  --t1:rgba(24,27,32,.84);--t2:rgba(11,12,15,.92);
+  filter:drop-shadow(0 0 14px color-mix(in srgb,var(--a) 16%,transparent));
+  transition:filter .3s ease;
+}
+.slot.buy{--a:#c9bfb0;--t1:rgba(31,29,26,.84);--t2:rgba(13,12,11,.92)}
+.slot:hover,.slot:focus-within{filter:drop-shadow(0 0 28px color-mix(in srgb,var(--a) 38%,transparent))}
+
+.panel{
+  --cut:28px;
+  --shape:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut));
+  position:relative;isolation:isolate;overflow:hidden;
+  display:flex;flex-direction:column;justify-content:flex-end;min-height:410px;
+  padding:34px 30px 30px;color:inherit;text-decoration:none;
+  background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 14%,transparent) 45%,var(--a));
+  clip-path:var(--shape);
+  transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));
+  transition:transform .18s ease-out;
+}
+.panel::before{
+  content:"";position:absolute;inset:1px;z-index:-1;clip-path:var(--shape);
+  background:
+    linear-gradient(color-mix(in srgb,var(--a) 7%,transparent) 1px,transparent 1px) 0 0/28px 28px,
+    linear-gradient(90deg,color-mix(in srgb,var(--a) 7%,transparent) 1px,transparent 1px) 0 0/28px 28px,
+    linear-gradient(165deg,var(--t1),var(--t2));
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+}
+.panel:focus-visible{outline:2px solid var(--a);outline-offset:6px}
+
+/* Scan-Strahl beim Hover */
+.scan{
+  position:absolute;left:0;right:0;top:0;height:2px;opacity:0;pointer-events:none;
+  background:linear-gradient(90deg,transparent,var(--a),transparent);
+  box-shadow:0 0 18px 4px color-mix(in srgb,var(--a) 38%,transparent);
+}
+.panel:hover .scan,.panel:focus-visible .scan{animation:scan .9s ease-out 1}
+@keyframes scan{0%{top:0;opacity:1}100%{top:100%;opacity:0}}
+
+/* Ringe */
+.hud{position:absolute;top:26px;right:26px;width:clamp(96px,12vw,128px);height:auto;color:var(--a)}
+.hud *{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+.hud .r1{stroke-width:1.2;stroke-dasharray:3 7;transform-origin:60px 60px;animation:spin 26s linear infinite}
+.hud .r2{stroke-width:2;stroke-dasharray:62 18 12 18;transform-origin:60px 60px;animation:spin 18s linear infinite reverse}
+.hud .r3{stroke-width:1;opacity:.5}
+.hud .ic{stroke-width:1.5;filter:drop-shadow(0 0 4px currentColor)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+h2{margin:0;font:700 clamp(1.6rem,3vw,2.2rem)/1.15 var(--display);letter-spacing:.05em;text-shadow:0 0 14px color-mix(in srgb,var(--a) 45%,transparent)}
+.panel p{margin:12px 0 0;max-width:32ch;color:var(--muted);font-size:1.05rem;line-height:1.55}
+.cta{
+  margin-top:26px;display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border:1px solid var(--a);color:var(--a);
+  font-weight:600;font-size:1rem;letter-spacing:.05em;
+  background:color-mix(in srgb,var(--a) 8%,transparent);
+  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px));
+  transition:background .25s ease,color .25s ease;
+}
+.cta svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .25s ease}
+.panel:hover .cta,.panel:focus-visible .cta{background:var(--a);color:#0a0a0b}
+.panel:hover .cta svg,.panel:focus-visible .cta svg{transform:translateX(5px)}
+
+@media (max-width:760px){
+  .grid{grid-template-columns:1fr}
+  .panel{min-height:360px}
+}
+@media (prefers-reduced-motion:reduce){
+  .aurora i,.hud .r1,.hud .r2,.panel:hover .scan{animation:none}
+  .panel,.cta,.cta svg,.slot{transition:none}
+}
+</style>
+<link rel="stylesheet" href="/theme.css">
 </head>
 <body>
-  <main class="wrap">
-    <div class="title">
-      <div class="eyebrow">Olymp</div>
-      <h1>Wähle deinen Bereich</h1>
-      <p class="subtitle">Hier kannst du direkt zwischen dem Produktionsrechner und dem Material-Ankauf wechseln.</p>
-    </div>
 
-    <div class="grid">
-      <a class="card" href="/produktions-rechner.html">
-        <span class="badge">Option 1</span>
-        <div class="icon" aria-hidden="true">🧮</div>
-        <h2>Rechner</h2>
-        <p>Der bestehende Produktionsrechner öffnet sich hier. Preise, Rohstoffe und Gewinnberechnungen bleiben unverändert.</p>
-        <span class="cta">Zum Rechner</span>
-      </a>
+<header>
+  <h1>Wähle deinen Bereich</h1>
+  <p>Produktionsrechner oder Material Ankauf.</p>
+</header>
 
-      <a class="card" href="/material-ankauf.html">
-        <span class="badge">Option 2</span>
-        <div class="icon" aria-hidden="true">📦</div>
-        <h2>Material Ankauf</h2>
-        <p>Hier findest du die Übersicht für den Material-Ankauf mit schnellen Informationen zu Bedarf, Lieferumfang und Bestellhinweisen.</p>
-        <span class="cta">Zum Ankauf</span>
-      </a>
-    </div>
-  </main>
+<main class="grid">
+  <div class="slot calc">
+    <a class="panel" href="/produktions-rechner.html">
+      <span class="scan" aria-hidden="true"></span>
+      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="r1" cx="60" cy="60" r="56"/>
+        <circle class="r2" cx="60" cy="60" r="44"/>
+        <circle class="r3" cx="60" cy="60" r="32"/>
+        <g class="ic" transform="translate(42 42) scale(1.5)"><rect x="5" y="2.5" width="14" height="19" rx="2"/><rect x="8" y="5.5" width="8" height="3.5" rx=".6"/><path d="M8.5 13h.01M12 13h.01M15.5 13h.01M8.5 16.5h.01M12 16.5h.01M15.5 16.5h.01"/></g>
+      </svg>
+      <h2>Rechner</h2>
+      <p>Preise, Rohstoffe und Gewinn für die Produktion berechnen.</p>
+      <span class="cta">Rechner öffnen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+    </a>
+  </div>
+
+  <div class="slot buy">
+    <a class="panel" href="/material-ankauf.html">
+      <span class="scan" aria-hidden="true"></span>
+      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="r1" cx="60" cy="60" r="56"/>
+        <circle class="r2" cx="60" cy="60" r="44"/>
+        <circle class="r3" cx="60" cy="60" r="32"/>
+        <g class="ic" transform="translate(42 42) scale(1.5)"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/></g>
+      </svg>
+      <h2>Material Ankauf</h2>
+      <p>Bedarf, Lieferumfang und Bestellhinweise im Überblick.</p>
+      <span class="cta">Ankauf öffnen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+    </a>
+  </div>
+</main>
+
+<script src="/bg.js"></script>
 </body>
 </html>

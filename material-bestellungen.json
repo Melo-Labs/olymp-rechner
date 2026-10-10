@@ -7,5 +7,14 @@
     "totalMaterials": 500,
     "totalPrice": 100000,
     "message": "📦 Neue Material-Bestellung\nTechnische Materialien: 250\nMedizinische Materialien: 250\nGesamtanzahl: 500\nHandynummer: +49123456789\nGesamtpreis: 100000 $\nZeitstempel: 10.10.2026, 12:43:17"
+  },
+  {
+    "createdAt": "2026-10-10T13:56:11.489Z",
+    "technical": 10,
+    "medical": 5,
+    "phone": "+491701234567",
+    "totalMaterials": 15,
+    "totalPrice": 3250,
+    "message": "📦 Neue Material-Bestellung\nTechnische Materialien: 10\nMedizinische Materialien: 5\nGesamtanzahl: 15\nHandynummer: +491701234567\nGesamtpreis: 3250 $\nZeitstempel: 10.10.2026, 15:56:11"
   }
 ]

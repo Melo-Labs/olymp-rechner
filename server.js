@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+const { verifyKey } = require("discord-interactions");
 
 function loadEnvFile() {
   const file = path.join(__dirname, ".env");
@@ -38,7 +39,9 @@ const staticFiles = new Map([
   ["/material-ankauf.js", "material-ankauf.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/script.js", "script.js"],
-  ["/style.css", "style.css"]
+  ["/style.css", "style.css"],
+  ["/theme.css", "theme.css"],
+  ["/bg.js", "bg.js"]
 ]);
 
 function discordConfig() {
@@ -49,6 +52,7 @@ function discordConfig() {
     roleId: process.env.DISCORD_ROLE_ID || "",
     redirectUri: process.env.DISCORD_REDIRECT_URI || "",
     botToken: process.env.DISCORD_BOT_TOKEN || "",
+    publicKey: process.env.DISCORD_PUBLIC_KEY || "",
     allowedLogChannelId: process.env.DISCORD_ALLOWED_LOG_CHANNEL_ID || "",
     deniedLogChannelId: process.env.DISCORD_DENIED_LOG_CHANNEL_ID || ""
   };
@@ -121,14 +125,35 @@ function loginPage(error = "") {
   };
   const message = messages[error] || "";
   return `<!doctype html>
-<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung · Olymp Rechner</title>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung</title>
+<link rel="stylesheet" href="/theme.css">
 <style>
-:root{color-scheme:dark;--bg:#111311;--panel:#1c201d;--line:#353c35;--text:#f3f4ee;--muted:#a6ada4;--accent:#f0ce32;--error:#ff8d82}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 0%,#293027 0%,var(--bg) 60%);color:var(--text);font:16px/1.5 system-ui,sans-serif}.login{width:min(440px,calc(100% - 32px));padding:32px;background:var(--panel);border:1px solid var(--line);border-radius:8px}h1{margin:0 0 8px;font-size:24px}p{margin:0 0 24px;color:var(--muted)}.error{margin:0 0 18px;color:var(--error)}.privacy{margin:18px 0 0;font-size:12px}a{display:flex;align-items:center;justify-content:center;min-height:48px;padding:10px 16px;background:var(--accent);color:#191a15;text-decoration:none;font-weight:700;border-radius:5px}a:hover{filter:brightness(1.06)}
-</style></head><body><main class="login"><h1>Olymp Produktions Rechner</h1><p>Zum Zugriff mit Discord anmelden.</p>${message ? `<p class="error" role="alert">${message}</p>` : ""}<a href="/auth/discord">Mit Discord anmelden</a><p class="privacy">Bei erfolgreichen Anmeldungen und abgelehnten Rollenprüfungen werden Discord-Name, Profilbild, User-ID und Ergebnis je nach Ergebnis in den zugehörigen privaten Log-Channel protokolliert.</p></main></body></html>`;
+:root{color-scheme:dark;--text:#ececec;--muted:#9a9da3;--error:#ff8d82;--br:rgba(228,232,238,.5)}*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;color:var(--text);font:16px/1.5 var(--body)}
+.login{width:min(440px,calc(100% - 32px));padding:34px 30px;border:1px solid rgba(228,232,238,.14);border-radius:6px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);background:linear-gradient(var(--br),var(--br)) 0 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/1px 14px no-repeat,linear-gradient(165deg,rgba(27,29,33,.82),rgba(11,12,14,.9))}
+h1{margin:0 0 8px;font:700 24px/1.2 var(--display);letter-spacing:.05em;text-shadow:0 0 16px rgba(255,255,255,.3)}
+p{margin:0 0 24px;color:var(--muted)}.error{margin:0 0 18px;color:var(--error)}
+a{display:flex;align-items:center;justify-content:center;min-height:48px;padding:10px 16px;background:linear-gradient(135deg,#f4f6f9,#aeb6c1);color:#0a0a0b;text-decoration:none;font-weight:600;letter-spacing:.04em;border-radius:6px;transition:box-shadow .2s}
+a:hover{box-shadow:0 0 26px rgba(228,232,238,.4)}
+</style></head><body><main class="login"><h1>Produktionsrechner</h1><p>Zum Zugriff mit Discord anmelden.</p>${message ? `<p class="error" role="alert">${message}</p>` : ""}<a href="/auth/discord">Mit Discord anmelden</a></main><script src="/bg.js"></script></body></html>`;
 }
 
 function parseJson(text) {
   try { return JSON.parse(text); } catch { return null; }
+}
+
+async function readRequestBody(req, maxBytes = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk.toString("utf8");
+      if (Buffer.byteLength(body, "utf8") > maxBytes) {
+        reject(new Error("Request body too large."));
+      }
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
 }
 
 async function discordFetch(url, options = {}) {
@@ -353,7 +378,8 @@ function serveStatic(req, res, pathname) {
       ".jpg": "image/jpeg",
       ".jpeg": "image/jpeg",
       ".webp": "image/webp",
-      ".svg": "image/svg+xml"
+      ".svg": "image/svg+xml",
+      ".woff2": "font/woff2"
     };
     applySecurityHeaders(res);
     res.writeHead(200, { "Content-Type": types[extension] || "application/octet-stream", "Cache-Control": "private, no-store" });
@@ -383,13 +409,120 @@ function saveMaterialOrderLocally(order) {
   return logPath;
 }
 
+function buildMaterialOrderPayload(order) {
+  const contactPhone = String(order.phone || "").replace(/[^\d+]/g, "");
+  return {
+    content: "📦 Neue Material-Bestellung",
+    embeds: [{
+      title: "Neue Material-Bestellung",
+      description: "Eine neue Bestellung wurde im Rechner erfasst.",
+      color: 0x2ea6ff,
+      fields: [
+        { name: "Technische Materialien", value: `${order.technical}`, inline: true },
+        { name: "Medizinische Materialien", value: `${order.medical}`, inline: true },
+        { name: "Gesamtanzahl", value: `${order.totalMaterials}`, inline: true },
+        { name: "Handynummer", value: order.phone || "—", inline: true },
+        { name: "Gesamtpreis", value: `${order.totalPrice} $`, inline: true },
+        { name: "Zeitstempel", value: `${new Date().toLocaleString("de-DE")}`, inline: false }
+      ],
+      footer: { text: "Olymp Rechner • Material-Ankauf" },
+      timestamp: new Date().toISOString()
+    }],
+    components: [{
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 5,
+          label: "Kontaktaufnahme",
+          url: contactPhone ? `tel:${contactPhone}` : "https://example.com/contact"
+        },
+        {
+          type: 2,
+          style: 3,
+          label: "Ausgeliefert",
+          custom_id: "material_order_delivered"
+        },
+        {
+          type: 2,
+          style: 4,
+          label: "Abgelehnt",
+          custom_id: "material_order_rejected"
+        }
+      ]
+    }],
+    allowed_mentions: { parse: [] }
+  };
+}
+
+function verifyDiscordInteraction(rawBody, signatureHex, timestamp, publicKey) {
+  if (!signatureHex || !timestamp || !publicKey) return false;
+  try {
+    return verifyKey(rawBody, signatureHex, timestamp, publicKey);
+  } catch {
+    return false;
+  }
+}
+
+async function handleDiscordInteraction(req, res) {
+  const config = discordConfig();
+  if (!config.publicKey) {
+    send(res, 503, JSON.stringify({ error: "Discord interaction endpoint not configured." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  let rawBody = "";
+  try {
+    rawBody = await readRequestBody(req, 256 * 1024);
+  } catch {
+    send(res, 413, JSON.stringify({ error: "Payload too large" }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const signature = req.headers["x-signature-ed25519"];
+  const timestamp = req.headers["x-signature-timestamp"];
+  if (!verifyDiscordInteraction(rawBody, String(signature || ""), String(timestamp || ""), config.publicKey)) {
+    send(res, 401, JSON.stringify({ error: "Invalid request signature" }), "application/json; charset=utf-8");
+    return;
+  }
+
+  let payload = {};
+  try {
+    payload = JSON.parse(rawBody || "{}");
+  } catch {
+    send(res, 400, JSON.stringify({ error: "Invalid interaction payload" }), "application/json; charset=utf-8");
+    return;
+  }
+
+  if (payload.type === 1) {
+    send(res, 200, JSON.stringify({ type: 1 }), "application/json; charset=utf-8");
+    return;
+  }
+
+  if (payload.type === 3 && payload.data?.component_type === 2) {
+    const action = payload.data.custom_id === "material_order_delivered" ? "Ausgeliefert" : "Abgelehnt";
+    send(res, 200, JSON.stringify({
+      type: 7,
+      data: {
+        content: `✅ Bestellung wurde als ${action} markiert.`,
+        components: []
+      }
+    }), "application/json; charset=utf-8");
+    return;
+  }
+
+  send(res, 200, JSON.stringify({ type: 4, data: { content: "Interaction verarbeitet." } }), "application/json; charset=utf-8");
+}
+
 async function postToDiscordChannel(orderMessage) {
   const config = discordConfig();
+  const payload = typeof orderMessage === "string" ? { content: orderMessage, allowed_mentions: { parse: [] } } : orderMessage;
+
   if (ORDER_WEBHOOK_URL) {
     const response = await discordFetch(ORDER_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: orderMessage, allowed_mentions: { parse: [] } })
+      body: JSON.stringify(payload)
     });
     const data = parseJson(await response.text());
     if (!response.ok) {
@@ -405,7 +538,7 @@ async function postToDiscordChannel(orderMessage) {
         Authorization: `Bot ${config.botToken}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ content: orderMessage, allowed_mentions: { parse: [] } })
+      body: JSON.stringify(payload)
     });
     const data = parseJson(await response.text());
     if (!response.ok) {
@@ -446,25 +579,24 @@ async function handleMaterialOrder(req, res) {
 
   const totalMaterials = technical + medical;
   const totalPrice = technical * 250 + medical * 150;
-  const message = `📦 Neue Material-Bestellung\n` +
-    `Technische Materialien: ${technical}\n` +
-    `Medizinische Materialien: ${medical}\n` +
-    `Gesamtanzahl: ${totalMaterials}\n` +
-    `Handynummer: ${phone}\n` +
-    `Gesamtpreis: ${totalPrice} $\n` +
-    `Zeitstempel: ${new Date().toLocaleString("de-DE")}`;
-
   const order = {
     technical,
     medical,
     phone,
     totalMaterials,
     totalPrice,
-    message
+    message: `📦 Neue Material-Bestellung\n` +
+      `Technische Materialien: ${technical}\n` +
+      `Medizinische Materialien: ${medical}\n` +
+      `Gesamtanzahl: ${totalMaterials}\n` +
+      `Handynummer: ${phone}\n` +
+      `Gesamtpreis: ${totalPrice} $\n` +
+      `Zeitstempel: ${new Date().toLocaleString("de-DE")}`
   };
+  const discordPayload = buildMaterialOrderPayload(order);
 
   try {
-    const result = await postToDiscordChannel(message);
+    const result = await postToDiscordChannel(discordPayload);
     if (result.method === "local-only") {
       saveMaterialOrderLocally(order);
       send(res, 200, JSON.stringify({
@@ -504,6 +636,10 @@ async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const pathname = url.pathname;
   const config = discordConfig();
+  if (req.method === "POST" && pathname === "/api/discord-interactions") {
+    await handleDiscordInteraction(req, res);
+    return;
+  }
   if (req.method === "POST" && pathname === "/api/material-bestellung") {
     await handleMaterialOrder(req, res);
     return;
@@ -535,7 +671,7 @@ async function handleRequest(req, res) {
     redirect(res, "/login");
     return;
   }
-  if (pathname === "/" || pathname === "/index.html" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname.startsWith("/img/")) {
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/material-ankauf.html" || pathname === "/theme.css" || pathname === "/bg.js" || pathname === "/material-ankauf.js" || pathname.startsWith("/img/")) {
     serveStatic(req, res, pathname === "/index.html" ? "/index.html" : pathname);
     return;
   }
