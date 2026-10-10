@@ -54,7 +54,12 @@ function makeImageField(product, index) {
   if (product.image) {
     const image = document.createElement('img');
     image.src = product.image;
-    image.alt = `${product.name || 'Produkt'}-Bild`;
+    image.alt = '';
+    image.addEventListener('error', () => {
+      image.remove();
+      preview.classList.add('placeholder');
+      preview.textContent = 'Bild';
+    });
     preview.append(image);
   } else {
     preview.classList.add('placeholder');
