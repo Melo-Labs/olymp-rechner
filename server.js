@@ -31,9 +31,13 @@ const ROLE_CHECK_TTL = 60 * 1000;
 const ORDER_CHANNEL_ID = process.env.DISCORD_ORDER_CHANNEL_ID || "1558426870465302538";
 const STANK_ORDER_CHANNEL_ID = "1558497954921193592";
 const CUSTOM_ORDER_CHANNEL_ID = "1558508937400291338";
+const CATALOG_AUDIT_CHANNEL_ID = "1558539114662330419";
+const CATALOG_FILE = path.join(__dirname, "shop-products.json");
+const CATALOG_AUDIT_PENDING_FILE = path.join(__dirname, "shop-audit-pending.json");
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
+let catalogAuditInProgress = false;
 const staticFiles = new Map([
   ["/", "landing.html"],
   ["/index.html", "landing.html"],
@@ -43,6 +47,8 @@ const staticFiles = new Map([
   ["/stank-kauf.js", "stank-kauf.js"],
   ["/freie-bestellung.html", "freie-bestellung.html"],
   ["/freie-bestellung.js", "freie-bestellung.js"],
+  ["/admin/catalog", "catalog-admin.html"],
+  ["/admin/catalog.js", "catalog-admin.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/script.js", "script.js"],
   ["/style.css", "style.css"],
@@ -56,6 +62,7 @@ function discordConfig() {
     clientSecret: process.env.DISCORD_CLIENT_SECRET || "",
     guildId: process.env.DISCORD_GUILD_ID || "",
     roleId: process.env.DISCORD_ROLE_ID || "",
+    catalogAdminRoleId: process.env.DISCORD_CATALOG_ADMIN_ROLE_ID || "",
     redirectUri: process.env.DISCORD_REDIRECT_URI || "",
     botToken: process.env.DISCORD_BOT_TOKEN || "",
     publicKey: process.env.DISCORD_PUBLIC_KEY || "",
@@ -66,7 +73,17 @@ function discordConfig() {
 
 function configIsReady(config) {
   const snowflake = /^\d{17,20}$/;
-  return Object.values(config).every(Boolean)
+  return [
+    config.clientId,
+    config.clientSecret,
+    config.guildId,
+    config.roleId,
+    config.redirectUri,
+    config.botToken,
+    config.publicKey,
+    config.allowedLogChannelId,
+    config.deniedLogChannelId
+  ].every(Boolean)
     && [config.guildId, config.roleId, config.allowedLogChannelId, config.deniedLogChannelId].every(id => snowflake.test(id));
 }
 
@@ -121,7 +138,7 @@ function redirect(res, location) {
   res.end();
 }
 
-function loginPage(error = "") {
+function loginPage(error = "", title = "Produktionsrechner") {
   const messages = {
     setup: "Der Discord-Login oder der private Log-Channel ist noch nicht konfiguriert.",
     role: "Du hast keine passende Rolle auf dem Discord-Server.",
@@ -141,7 +158,7 @@ h1{margin:0 0 8px;font:700 24px/1.2 var(--display);letter-spacing:.05em;text-sha
 p{margin:0 0 24px;color:var(--muted)}.error{margin:0 0 18px;color:var(--error)}
 a{display:flex;align-items:center;justify-content:center;min-height:48px;padding:10px 16px;background:linear-gradient(135deg,#f4f6f9,#aeb6c1);color:#0a0a0b;text-decoration:none;font-weight:600;letter-spacing:.04em;border-radius:6px;transition:box-shadow .2s}
 a:hover{box-shadow:0 0 26px rgba(228,232,238,.4)}
-</style></head><body><main class="login"><h1>Produktionsrechner</h1><p>Zum Zugriff mit Discord anmelden.</p>${message ? `<p class="error" role="alert">${message}</p>` : ""}<a href="/auth/discord">Mit Discord anmelden</a></main><script src="/bg.js"></script></body></html>`;
+</style></head><body><main class="login"><h1>${title}</h1><p>Zum Zugriff mit Discord anmelden.</p>${message ? `<p class="error" role="alert">${message}</p>` : ""}<a href="${title === "Admin Panel" ? "/auth/discord?next=%2Fadmin%2Fcatalog" : "/auth/discord"}">Mit Discord anmelden</a></main><script src="/bg.js"></script></body></html>`;
 }
 
 function parseJson(text) {
@@ -215,7 +232,7 @@ async function refreshToken(session, config) {
   session.tokenExpiresAt = Date.now() + (Number(data.expires_in) || 0) * 1000;
 }
 
-async function memberHasRole(session, config) {
+async function memberHasRole(session, config, roleId = config.roleId) {
   if (session.tokenExpiresAt <= Date.now() + 30000) await refreshToken(session, config);
   const requestMember = () => discordFetch(`https://discord.com/api/v10/users/@me/guilds/${encodeURIComponent(config.guildId)}/member`, {
     headers: { Authorization: `Bearer ${session.accessToken}` }
@@ -228,7 +245,7 @@ async function memberHasRole(session, config) {
   if (response.status === 403 || response.status === 404) return false;
   const member = parseJson(await response.text());
   if (!response.ok || !Array.isArray(member?.roles)) throw new Error("Discord membership check failed");
-  return member.roles.includes(config.roleId);
+  return member.roles.includes(roleId);
 }
 
 async function logDiscordAccess(user, authorized, config) {
@@ -288,14 +305,18 @@ function safeEqual(left, right) {
 
 async function beginLogin(req, res, config) {
   if (!configIsReady(config)) {
-    send(res, 503, loginPage("setup"), "text/html; charset=utf-8");
+    const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    send(res, 503, loginPage("setup", loginUrl.searchParams.get("next") === "/admin/catalog" ? "Admin Panel" : "Produktionsrechner"), "text/html; charset=utf-8");
     return;
   }
   pruneState();
   const state = crypto.randomBytes(32).toString("base64url");
   const verifier = crypto.randomBytes(48).toString("base64url");
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
-  pendingLogins.set(state, { verifier, expiresAt: Date.now() + 10 * 60 * 1000 });
+  const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const requestedDestination = loginUrl.searchParams.get("next");
+  const redirectPath = requestedDestination === "/admin/catalog" ? requestedDestination : "";
+  pendingLogins.set(state, { verifier, redirectPath, expiresAt: Date.now() + 10 * 60 * 1000 });
   appendCookie(res, makeCookie("olymp_oauth_state", state, 600));
   const query = new URLSearchParams({
     client_id: config.clientId,
@@ -337,6 +358,8 @@ async function finishLogin(req, res, url, config) {
     if (!userResponse.ok || !user?.id) throw new Error("Discord user lookup failed");
     const session = {
       userId: user.id,
+      discordName: String(user.global_name || user.username || "Unbekannt").slice(0, 80),
+      username: String(user.username || "Unbekannt").slice(0, 80),
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       tokenExpiresAt: Date.now() + (Number(token.expires_in) || 0) * 1000,
@@ -353,7 +376,7 @@ async function finishLogin(req, res, url, config) {
     const sessionId = crypto.randomBytes(32).toString("base64url");
     sessions.set(sessionId, session);
     appendCookie(res, makeCookie("olymp_session", sessionId, SESSION_TTL / 1000));
-    redirect(res, "/produktions-rechner.html");
+    redirect(res, pending.redirectPath || "/produktions-rechner.html");
   } catch (error) {
     console.error("Discord OAuth fehlgeschlagen:", error.message);
     redirect(res, "/login?error=discord");
@@ -425,6 +448,191 @@ function saveMaterialOrderLocally(order) {
   return saveOrderLocally(order, "material-bestellungen.json");
 }
 
+function readShopProducts() {
+  const products = JSON.parse(fs.readFileSync(CATALOG_FILE, "utf8"));
+  if (!Array.isArray(products)) throw new Error("Shop product catalog must be a JSON array.");
+  return products;
+}
+
+function saveShopProducts(products) {
+  const temporaryFile = `${CATALOG_FILE}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryFile, JSON.stringify(products, null, 2), { encoding: "utf8", flag: "wx" });
+  fs.renameSync(temporaryFile, CATALOG_FILE);
+}
+
+async function requireCatalogAdmin(req, res, config) {
+  const deny = (status, message) => {
+    if (String(req.headers.accept || "").includes("text/html")) {
+      const page = `<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Produktverwaltung</title><body style="margin:0;padding:3rem;background:#101214;color:#ececec;font:16px/1.6 system-ui,sans-serif"><main style="max-width:640px;margin:auto"><h1>Produktverwaltung</h1><p>${message}</p><a style="color:#8ec6e8" href="/freie-bestellung.html">Zurück zum Shop</a></main></body></html>`;
+      send(res, status, page, "text/html; charset=utf-8");
+    } else {
+      send(res, status, JSON.stringify({ ok: false, message }), "application/json; charset=utf-8");
+    }
+  };
+  if (!/^\d{17,20}$/.test(config.catalogAdminRoleId)) {
+    deny(503, "Die Discord-Rolle für die Produktverwaltung ist noch nicht konfiguriert. Bitte DISCORD_CATALOG_ADMIN_ROLE_ID setzen.");
+    return false;
+  }
+  if (!configIsReady(config)) {
+    redirect(res, "/login?error=setup&admin=1");
+    return false;
+  }
+
+  let session;
+  try {
+    session = await authorizedSession(req, config);
+  } catch (error) {
+    console.error("Katalog-Admin-Rollenprüfung fehlgeschlagen:", error.message);
+    deny(502, "Die Discord-Rollenprüfung ist momentan nicht erreichbar. Bitte versuche es später erneut.");
+    return false;
+  }
+  if (!session) {
+    if (String(req.headers.accept || "").includes("text/html")) {
+      redirect(res, "/login?admin=1");
+    } else {
+      send(res, 401, JSON.stringify({ ok: false, message: "Bitte melde dich mit deinem Discord-Admin-Konto an." }), "application/json; charset=utf-8");
+    }
+    return null;
+  }
+
+  try {
+    if (!await memberHasRole(session, config, config.catalogAdminRoleId)) {
+      deny(403, "Dein Discord-Konto hat keine Katalog-Admin-Rolle.");
+      return null;
+    }
+  } catch (error) {
+    console.error("Katalog-Admin-Rollenprüfung fehlgeschlagen:", error.message);
+    deny(502, "Die Discord-Rollenprüfung ist momentan nicht erreichbar. Bitte versuche es später erneut.");
+    return null;
+  }
+  return session;
+}
+
+function validateShopProducts(value) {
+  if (!Array.isArray(value) || value.length > 200) {
+    return { error: "Der Katalog darf höchstens 200 Produkte enthalten." };
+  }
+  const products = [];
+  const ids = new Set();
+  for (const entry of value) {
+    const name = String(entry?.name || "").trim();
+    const description = String(entry?.description || "").trim();
+    const price = Number(entry?.price);
+    const id = typeof entry?.id === "string" && /^[a-f0-9-]{36}$/i.test(entry.id)
+      ? entry.id
+      : crypto.randomUUID();
+    if (!name || name.length > 80 || description.length > 240
+      || !Number.isSafeInteger(price) || price < 1 || price > 1000000000
+      || typeof entry?.active !== "boolean" || ids.has(id)) {
+      return { error: "Produktdaten ungültig: Name, Preis, Status oder Produkt-ID prüfen." };
+    }
+    ids.add(id);
+    products.push({ id, name, description, price, active: entry.active });
+  }
+  return { products };
+}
+
+function describeCatalogChanges(previous, updated) {
+  const before = new Map(previous.map(product => [product.id, product]));
+  const after = new Map(updated.map(product => [product.id, product]));
+  const changes = [];
+  const auditText = value => String(value ?? "").replace(/@/g, "@\u200b").replace(/\s+/g, " ").slice(0, 320);
+
+  for (const product of updated) {
+    const oldProduct = before.get(product.id);
+    if (!oldProduct) {
+      changes.push(`➕ Hinzugefügt: **${auditText(product.name)}** — ${product.price.toLocaleString("de-DE")} $ (${product.active ? "aktiv" : "inaktiv"})`);
+      continue;
+    }
+    const differences = [];
+    if (oldProduct.name !== product.name) differences.push(`Name: „${auditText(oldProduct.name)}“ → „${auditText(product.name)}“`);
+    if (oldProduct.description !== product.description) differences.push(`Beschreibung: „${auditText(oldProduct.description || "—")}“ → „${auditText(product.description || "—")}“`);
+    if (oldProduct.price !== product.price) differences.push(`Preis: ${oldProduct.price.toLocaleString("de-DE")} $ → ${product.price.toLocaleString("de-DE")} $`);
+    if (oldProduct.active !== product.active) differences.push(`Status: ${oldProduct.active ? "aktiv" : "inaktiv"} → ${product.active ? "aktiv" : "inaktiv"}`);
+    if (differences.length) changes.push(`✏️ Geändert: **${auditText(product.name)}** — ${differences.join("; ")}`);
+  }
+
+  for (const product of previous) {
+    if (!after.has(product.id)) changes.push(`🗑️ Entfernt: **${auditText(product.name)}** — ${product.price.toLocaleString("de-DE")} $`);
+  }
+  return changes;
+}
+
+function readPendingCatalogAudits() {
+  if (!fs.existsSync(CATALOG_AUDIT_PENDING_FILE)) return [];
+  const pending = JSON.parse(fs.readFileSync(CATALOG_AUDIT_PENDING_FILE, "utf8"));
+  if (!Array.isArray(pending)) throw new Error("Pending catalog audit data must be an array.");
+  return pending;
+}
+
+function savePendingCatalogAudits(pending) {
+  const temporaryFile = `${CATALOG_AUDIT_PENDING_FILE}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryFile, JSON.stringify(pending, null, 2), { encoding: "utf8", flag: "wx" });
+  fs.renameSync(temporaryFile, CATALOG_AUDIT_PENDING_FILE);
+}
+
+async function logCatalogChanges(records) {
+  for (const record of records) {
+    const chunks = [];
+    let chunk = "";
+    for (const change of record.changes) {
+      const nextChunk = chunk ? `${chunk}\n${change}` : change;
+      if (nextChunk.length > 3500 && chunk) {
+        chunks.push(chunk);
+        chunk = change;
+      } else {
+        chunk = nextChunk;
+      }
+    }
+    if (chunk) chunks.push(chunk);
+
+    for (let index = 0; index < chunks.length; index++) {
+      const payload = {
+        embeds: [{
+          title: `Shop-Katalog geändert (${index + 1}/${chunks.length})`,
+          description: chunks[index],
+          color: 0xe4e8ee,
+          fields: [
+            { name: "Geändert von", value: record.adminName, inline: true },
+            { name: "Discord-ID", value: record.userId, inline: true },
+            { name: "Änderungen", value: `${record.changes.length}`, inline: true }
+          ],
+          timestamp: record.timestamp
+        }],
+        allowed_mentions: { parse: [] }
+      };
+      const result = await postToDiscordChannel(payload, CATALOG_AUDIT_CHANNEL_ID, false);
+      if (result.method !== "bot") throw new Error("Discord-Bot ist für das Katalog-Audit nicht konfiguriert.");
+    }
+  }
+}
+
+async function flushPendingCatalogAudits() {
+  if (catalogAuditInProgress) return { ok: false, changeCount: 0 };
+  catalogAuditInProgress = true;
+  try {
+    const pending = readPendingCatalogAudits();
+    const changeCount = pending.reduce((total, record) => total + record.changes.length, 0);
+    if (!pending.length) return { ok: true, changeCount: 0 };
+    await logCatalogChanges(pending);
+    const sentIds = new Set(pending.map(record => record.id));
+    const remaining = readPendingCatalogAudits().filter(record => !sentIds.has(record.id));
+    if (remaining.length) savePendingCatalogAudits(remaining);
+    else fs.unlinkSync(CATALOG_AUDIT_PENDING_FILE);
+    return { ok: true, changeCount };
+  } catch (error) {
+    console.error(`Katalog-Audit-Warteschlange konnte nicht vollständig verarbeitet werden (${CATALOG_AUDIT_CHANNEL_ID}):`, error.message);
+    return { ok: false, changeCount: 0 };
+  } finally {
+    catalogAuditInProgress = false;
+  }
+}
+
+const catalogAuditRetryTimer = setInterval(() => {
+  void flushPendingCatalogAudits();
+}, 60 * 1000);
+catalogAuditRetryTimer.unref();
+
 function buildStankOrderPayload(order) {
   return {
     content: "🌿 Neue STANK-Bestellung",
@@ -456,7 +664,7 @@ function buildStankOrderPayload(order) {
 
 function buildCustomOrderPayload(order) {
   const itemList = order.items.map((item, index) =>
-    `**${index + 1}. ${item.name}** — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $ Vorschlag = ${item.totalPrice.toLocaleString("de-DE")} $`
+    `**${index + 1}. ${item.name}**${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $${item.type === "custom" ? " Preisvorschlag" : " Festpreis"} = ${item.totalPrice.toLocaleString("de-DE")} $`
   ).join("\n");
   return {
     content: "🛒 Neue Wunsch-Bestellung",
@@ -467,7 +675,7 @@ function buildCustomOrderPayload(order) {
       fields: [
         { name: "IC-Name", value: order.icName, inline: true },
         { name: "Handynummer / IC", value: order.phone, inline: true },
-        { name: "Gesamtpreisvorschlag", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true }
+        { name: "Gesamtsumme", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true }
       ],
       footer: { text: "Olymp Rechner • Wunsch-Bestellung" },
       timestamp: new Date().toISOString()
@@ -845,13 +1053,34 @@ async function handleCustomOrder(req, res) {
 
   const items = [];
   let totalPrice = 0;
+  let catalog;
+  try {
+    catalog = readShopProducts();
+  } catch (error) {
+    console.error("Shop-Katalog konnte nicht gelesen werden:", error.message);
+    send(res, 500, JSON.stringify({ ok: false, message: "Der Produktkatalog ist momentan nicht verfügbar." }), "application/json; charset=utf-8");
+    return;
+  }
   for (const entry of payload.items) {
-    const name = String(entry?.name || "").trim();
+    const type = entry?.type === "catalog" ? "catalog" : "custom";
     const quantity = Number(entry?.quantity);
-    const pricePerItem = Number(entry?.pricePerItem);
+    let name;
+    let pricePerItem;
+    if (type === "catalog") {
+      const product = catalog.find(item => item.id === entry?.productId && item.active);
+      if (!product) {
+        send(res, 400, JSON.stringify({ ok: false, message: "Ein ausgewähltes Produkt ist nicht mehr verfügbar." }), "application/json; charset=utf-8");
+        return;
+      }
+      name = product.name;
+      pricePerItem = product.price;
+    } else {
+      name = String(entry?.name || "").trim();
+      pricePerItem = Number(entry?.pricePerItem);
+    }
     if (!name || name.length > 80 || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10000
       || !Number.isSafeInteger(pricePerItem) || pricePerItem < 1 || pricePerItem > 1000000000) {
-      send(res, 400, JSON.stringify({ ok: false, message: "Jede Position braucht Gegenstand, ganze Stückzahl und einen positiven Preisvorschlag." }), "application/json; charset=utf-8");
+      send(res, 400, JSON.stringify({ ok: false, message: "Jede Position braucht einen gültigen Gegenstand, eine Stückzahl und einen gültigen Preis." }), "application/json; charset=utf-8");
       return;
     }
     const itemTotal = quantity * pricePerItem;
@@ -859,7 +1088,7 @@ async function handleCustomOrder(req, res) {
       send(res, 400, JSON.stringify({ ok: false, message: "Der Gesamtpreisvorschlag ist zu hoch." }), "application/json; charset=utf-8");
       return;
     }
-    items.push({ name, quantity, pricePerItem, totalPrice: itemTotal });
+    items.push({ type, name, quantity, pricePerItem, totalPrice: itemTotal });
     totalPrice += itemTotal;
   }
 
@@ -870,8 +1099,8 @@ async function handleCustomOrder(req, res) {
     items,
     totalPrice,
     message: `🛒 Neue Wunsch-Bestellung\nIC-Name: ${icName}\nHandynummer / IC: ${phone}\n` +
-      items.map((item, index) => `${index + 1}. ${item.name} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
-      `\nGesamtpreisvorschlag: ${totalPrice} $`
+      items.map((item, index) => `${index + 1}. ${item.name}${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
+      `\nGesamtsumme: ${totalPrice} $`
   };
 
   try {
@@ -935,6 +1164,90 @@ async function handleRequest(req, res) {
     await handleCustomOrder(req, res);
     return;
   }
+  if (req.method === "GET" && pathname === "/api/shop/products") {
+    try {
+      const products = readShopProducts()
+        .filter(product => product.active)
+        .map(({ id, name, description, price }) => ({ id, name, description, price }));
+      send(res, 200, JSON.stringify({ ok: true, products }), "application/json; charset=utf-8");
+    } catch (error) {
+      console.error("Shop-Katalog konnte nicht gelesen werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Der Produktkatalog ist momentan nicht verfügbar." }), "application/json; charset=utf-8");
+    }
+    return;
+  }
+  if ((req.method === "GET" || req.method === "PUT") && pathname === "/api/admin/shop-products") {
+    const adminSession = await requireCatalogAdmin(req, res, config);
+    if (!adminSession) return;
+    if (req.method === "GET") {
+      try {
+        send(res, 200, JSON.stringify({ ok: true, products: readShopProducts() }), "application/json; charset=utf-8");
+      } catch (error) {
+        console.error("Shop-Katalog konnte nicht gelesen werden:", error.message);
+        send(res, 500, JSON.stringify({ ok: false, message: "Der Produktkatalog konnte nicht gelesen werden." }), "application/json; charset=utf-8");
+      }
+      return;
+    }
+    let payload;
+    try {
+      payload = JSON.parse(await readRequestBody(req, 256 * 1024));
+    } catch (error) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Ungültige oder zu große Produktdaten." }), "application/json; charset=utf-8");
+      return;
+    }
+    const validation = validateShopProducts(payload?.products);
+    if (validation.error) {
+      send(res, 400, JSON.stringify({ ok: false, message: validation.error }), "application/json; charset=utf-8");
+      return;
+    }
+    let previousProducts;
+    try {
+      previousProducts = readShopProducts();
+    } catch (error) {
+      console.error("Vorheriger Shop-Katalog konnte nicht gelesen werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Der aktuelle Produktkatalog konnte nicht gelesen werden." }), "application/json; charset=utf-8");
+      return;
+    }
+    try {
+      saveShopProducts(validation.products);
+    } catch (error) {
+      console.error("Shop-Katalog konnte nicht gespeichert werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Der Produktkatalog konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+      return;
+    }
+    const changes = describeCatalogChanges(previousProducts, validation.products);
+    let auditLogged = false;
+    let auditChangeCount = changes.length;
+    let warning = "";
+    try {
+      if (changes.length) {
+        const pending = readPendingCatalogAudits();
+        pending.push({
+          id: crypto.randomUUID(),
+          adminName: adminSession.discordName || adminSession.username || "Unbekannt",
+          userId: adminSession.userId,
+          timestamp: new Date().toISOString(),
+          changes
+        });
+        savePendingCatalogAudits(pending);
+      }
+      const auditResult = await flushPendingCatalogAudits();
+      auditLogged = auditResult.ok;
+      auditChangeCount = auditResult.changeCount || changes.length;
+      if (!auditLogged) warning = "Änderung gespeichert und zum Audit vorgemerkt. Discord konnte das Protokoll gerade nicht annehmen; der Server versucht es automatisch erneut.";
+    } catch (error) {
+      warning = "Änderung gespeichert, aber das Audit konnte nicht dauerhaft vorgemerkt werden. Bitte Serverprotokoll und Speicherplatz prüfen.";
+      console.error(`Shop-Katalog gespeichert, Audit konnte nicht vorgemerkt werden (${changes.length} Änderung(en)) für Channel ${CATALOG_AUDIT_CHANNEL_ID}:`, error.message);
+    }
+    send(res, 200, JSON.stringify({
+      ok: true,
+      products: validation.products,
+      auditLogged,
+      auditChangeCount,
+      warning
+    }), "application/json; charset=utf-8");
+    return;
+  }
   if (req.method !== "GET" && req.method !== "HEAD") {
     send(res, 405, "Methode nicht erlaubt");
     return;
@@ -944,7 +1257,8 @@ async function handleRequest(req, res) {
     return;
   }
   if (pathname === "/login") {
-    send(res, 200, loginPage(url.searchParams.get("error") || ""), "text/html; charset=utf-8");
+    const title = url.searchParams.get("admin") === "1" ? "Admin Panel" : "Produktionsrechner";
+    send(res, 200, loginPage(url.searchParams.get("error") || "", title), "text/html; charset=utf-8");
     return;
   }
   if (pathname === "/auth/discord") {
@@ -960,6 +1274,12 @@ async function handleRequest(req, res) {
     if (id) sessions.delete(id);
     clearCookie(res, "olymp_session");
     redirect(res, "/login");
+    return;
+  }
+  if (pathname === "/admin/catalog" || pathname === "/admin/catalog.js") {
+    const adminSession = await requireCatalogAdmin(req, res, config);
+    if (!adminSession) return;
+    serveStatic(req, res, pathname);
     return;
   }
   if (pathname === "/" || pathname === "/index.html" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {

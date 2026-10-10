@@ -1,100 +1,172 @@
 const form = document.getElementById('custom-order-form');
-const itemsContainer = document.getElementById('custom-items');
-const addItemButton = document.getElementById('add-item');
+const productsContainer = document.getElementById('shop-products');
+const cartContainer = document.getElementById('custom-items');
 const itemCount = document.getElementById('custom-item-count');
 const totalOutput = document.getElementById('custom-total');
 const statusBox = document.getElementById('custom-status');
+const customStatus = document.getElementById('custom-item-status');
 const icNameInput = document.getElementById('custom-ic-name');
 const phoneInput = document.getElementById('custom-phone');
+const submitButton = form.querySelector('[type="submit"]');
 const numberFormatter = new Intl.NumberFormat('de-DE');
 const MAX_ITEMS = 10;
-let nextItemId = 0;
+let products = [];
+let cart = [];
 
-function createItemRow() {
-  const itemId = ++nextItemId;
-  const row = document.createElement('div');
-  row.className = 'item-row';
-  row.innerHTML = `
-    <div class="field">
-      <label for="item-name-${itemId}">Gegenstand</label>
-      <input id="item-name-${itemId}" data-item-name type="text" maxlength="80" placeholder="z. B. Gegenstand" required>
-    </div>
-    <div class="field">
-      <label for="item-quantity-${itemId}">Menge</label>
-      <input id="item-quantity-${itemId}" data-item-quantity type="number" min="1" max="10000" step="1" value="1" required>
-    </div>
-    <div class="field price-field">
-      <label for="item-price-${itemId}">Preisvorschlag / Stück ($)</label>
-      <input id="item-price-${itemId}" data-item-price type="number" min="1" max="1000000000" step="1" placeholder="Dein Vorschlag" required>
-    </div>
-    <button class="remove-item" type="button" aria-label="Gegenstand entfernen">×</button>
-  `;
-  return row;
+function formatPrice(value) {
+  return `${numberFormatter.format(value)} $`;
 }
 
-function updateSummary() {
-  const rows = [...itemsContainer.querySelectorAll('.item-row')];
-  let total = 0;
-  rows.forEach((row) => {
-    const quantity = Math.max(0, Math.floor(Number(row.querySelector('[data-item-quantity]').value) || 0));
-    const price = Math.max(0, Number(row.querySelector('[data-item-price]').value) || 0);
-    total += quantity * price;
-  });
-  itemCount.textContent = String(rows.length);
-  totalOutput.textContent = `${numberFormatter.format(total)} $`;
-  addItemButton.disabled = rows.length >= MAX_ITEMS;
+function addToCart(item) {
+  const existing = cart.find(entry => entry.type === item.type
+    && (item.type === 'catalog' ? entry.productId === item.productId : entry.name.toLocaleLowerCase() === item.name.toLocaleLowerCase()
+      && entry.pricePerItem === item.pricePerItem));
+  if (existing) {
+    existing.quantity = Math.min(10000, existing.quantity + item.quantity);
+  } else if (cart.length < MAX_ITEMS) {
+    cart.push(item);
+  } else {
+    customStatus.textContent = `Der Warenkorb kann höchstens ${MAX_ITEMS} verschiedene Positionen enthalten.`;
+    customStatus.className = 'status error';
+    return false;
+  }
+  renderCart();
+  customStatus.textContent = '';
+  customStatus.className = 'status';
+  return true;
 }
 
-itemsContainer.append(createItemRow());
-updateSummary();
-
-addItemButton.addEventListener('click', () => {
-  if (itemsContainer.children.length >= MAX_ITEMS) return;
-  const row = createItemRow();
-  itemsContainer.append(row);
-  updateSummary();
-  row.querySelector('[data-item-name]').focus();
-});
-
-itemsContainer.addEventListener('click', (event) => {
-  const removeButton = event.target.closest('.remove-item');
-  if (!removeButton) return;
-  if (itemsContainer.children.length <= 1) {
-    statusBox.textContent = 'Mindestens ein Gegenstand muss in der Bestellung bleiben.';
-    statusBox.className = 'status error';
+function renderProducts() {
+  productsContainer.replaceChildren();
+  if (!products.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Aktuell sind noch keine Produkte verfügbar. Du kannst unten eine freie Wunschanfrage hinzufügen.';
+    productsContainer.append(empty);
     return;
   }
-  removeButton.closest('.item-row').remove();
-  statusBox.textContent = '';
-  statusBox.className = 'status';
-  updateSummary();
-});
 
-itemsContainer.addEventListener('input', updateSummary);
+  products.forEach(product => {
+    const card = document.createElement('article');
+    card.className = 'shop-product';
+    const title = document.createElement('h3');
+    title.textContent = product.name;
+    card.append(title);
+    if (product.description) {
+      const description = document.createElement('p');
+      description.textContent = product.description;
+      card.append(description);
+    }
+    const price = document.createElement('strong');
+    price.className = 'shop-price';
+    price.textContent = formatPrice(product.price);
+    card.append(price);
+    const addButton = document.createElement('button');
+    addButton.className = 'shop-add';
+    addButton.type = 'button';
+    addButton.textContent = 'In den Warenkorb';
+    addButton.addEventListener('click', () => {
+      addToCart({ type: 'catalog', productId: product.id, name: product.name, pricePerItem: product.price, quantity: 1 });
+    });
+    card.append(addButton);
+    productsContainer.append(card);
+  });
+}
+
+function renderCart() {
+  cartContainer.replaceChildren();
+  if (!cart.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Dein Warenkorb ist noch leer.';
+    cartContainer.append(empty);
+  }
+
+  let total = 0;
+  cart.forEach((item, index) => {
+    const row = document.createElement('div');
+    row.className = 'cart-row';
+    const details = document.createElement('div');
+    const name = document.createElement('h3');
+    name.textContent = item.name;
+    details.append(name);
+    const unitPrice = document.createElement('p');
+    unitPrice.textContent = `${item.type === 'custom' ? 'Preisvorschlag' : 'Festpreis'}: ${formatPrice(item.pricePerItem)} pro Stück`;
+    details.append(unitPrice);
+
+    const quantity = document.createElement('input');
+    quantity.type = 'number';
+    quantity.min = '1';
+    quantity.max = '10000';
+    quantity.step = '1';
+    quantity.value = String(item.quantity);
+    quantity.setAttribute('aria-label', `Menge für ${item.name}`);
+    quantity.addEventListener('change', () => {
+      const nextQuantity = Number(quantity.value);
+      if (!Number.isSafeInteger(nextQuantity) || nextQuantity < 1 || nextQuantity > 10000) {
+        quantity.value = String(item.quantity);
+        return;
+      }
+      cart[index].quantity = nextQuantity;
+      renderCart();
+    });
+
+    const lineTotal = document.createElement('strong');
+    lineTotal.className = 'line-price';
+    const itemTotal = item.quantity * item.pricePerItem;
+    lineTotal.textContent = formatPrice(itemTotal);
+    total += itemTotal;
+
+    const remove = document.createElement('button');
+    remove.className = 'remove-item';
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `${item.name} aus dem Warenkorb entfernen`);
+    remove.addEventListener('click', () => {
+      cart.splice(index, 1);
+      renderCart();
+    });
+    row.append(details, quantity, lineTotal, remove);
+    cartContainer.append(row);
+  });
+
+  itemCount.textContent = String(cart.length);
+  totalOutput.textContent = formatPrice(total);
+  submitButton.disabled = cart.length === 0;
+}
+
+document.getElementById('add-custom-item').addEventListener('click', () => {
+  const nameInput = document.getElementById('custom-name');
+  const quantityInput = document.getElementById('custom-quantity');
+  const priceInput = document.getElementById('custom-price');
+  const name = nameInput.value.trim();
+  const quantity = Number(quantityInput.value);
+  const pricePerItem = Number(priceInput.value);
+  if (!name || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10000
+    || !Number.isSafeInteger(pricePerItem) || pricePerItem < 1 || pricePerItem > 1000000000) {
+    customStatus.textContent = 'Bitte Gegenstand, gültige Menge und Preisvorschlag eingeben.';
+    customStatus.className = 'status error';
+    return;
+  }
+  if (addToCart({ type: 'custom', name, quantity, pricePerItem })) {
+    nameInput.value = '';
+    quantityInput.value = '1';
+    priceInput.value = '';
+  }
+});
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (!form.reportValidity()) return;
+  if (!form.reportValidity() || !cart.length) return;
 
-  const items = [...itemsContainer.querySelectorAll('.item-row')].map((row) => ({
-    name: row.querySelector('[data-item-name]').value.trim(),
-    quantity: Number(row.querySelector('[data-item-quantity]').value),
-    pricePerItem: Number(row.querySelector('[data-item-price]').value)
-  }));
+  const items = cart.map(item => item.type === 'catalog'
+    ? { type: 'catalog', productId: item.productId, quantity: item.quantity }
+    : { type: 'custom', name: item.name, quantity: item.quantity, pricePerItem: item.pricePerItem });
   const icName = icNameInput.value.trim();
   const phone = phoneInput.value.trim();
-
-  if (!icName || !phone || items.some(item =>
-    !item.name || !Number.isSafeInteger(item.quantity) || item.quantity < 1
-    || !Number.isSafeInteger(item.pricePerItem) || item.pricePerItem < 1
-  )) {
-    statusBox.textContent = 'Bitte prüfe deine Kontaktdaten und alle Bestellpositionen.';
-    statusBox.className = 'status error';
-    return;
-  }
-
   statusBox.textContent = 'Bestellung wird gesendet...';
   statusBox.className = 'status';
+  submitButton.disabled = true;
 
   try {
     const response = await fetch('/api/wunsch-bestellung', {
@@ -107,13 +179,35 @@ form.addEventListener('submit', async (event) => {
       throw new Error(result.message || 'Bestellung konnte nicht gesendet werden.');
     }
 
-    statusBox.textContent = result.message || `Bestellung gesendet. Preisvorschlag gesamt: ${numberFormatter.format(result.total)} $.`;
+    statusBox.textContent = result.message || `Bestellung gesendet. Gesamt: ${formatPrice(result.total)}.`;
     statusBox.className = 'status success';
     form.reset();
-    itemsContainer.replaceChildren(createItemRow());
-    updateSummary();
+    cart = [];
+    renderCart();
   } catch (error) {
     statusBox.textContent = error.message || 'Fehler beim Senden der Bestellung.';
     statusBox.className = 'status error';
+    submitButton.disabled = cart.length === 0;
   }
 });
+
+async function loadProducts() {
+  try {
+    const response = await fetch('/api/shop/products');
+    const result = await response.json();
+    if (!response.ok || result.ok !== true || !Array.isArray(result.products)) {
+      throw new Error(result.message || 'Produkte konnten nicht geladen werden.');
+    }
+    products = result.products;
+    renderProducts();
+  } catch (error) {
+    productsContainer.replaceChildren();
+    const message = document.createElement('p');
+    message.className = 'status error';
+    message.textContent = error.message || 'Produktkatalog konnte nicht geladen werden.';
+    productsContainer.append(message);
+  }
+}
+
+renderCart();
+loadProducts();

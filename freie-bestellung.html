@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Wunsch-Bestellung</title>
+  <title>Shop &amp; Wunsch-Bestellung</title>
   <link rel="stylesheet" href="/theme.css">
   <style>
     :root{--text:#ececec;--muted:#9a9da3;--a:#8ec6e8;--green:#7ee0a6;--red:#ff7b7b;--br:rgba(142,198,232,.5)}
@@ -41,6 +41,20 @@
     .cta:hover{transform:translateY(-1px);box-shadow:0 0 30px rgba(142,198,232,.4)}
     .status{min-height:24px;font-size:.92rem;color:var(--muted);font-weight:600}
     .status.error{color:var(--red)}.status.success{color:var(--green)}
+    .shop-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+    .shop-product{display:grid;gap:10px;padding:16px;border:1px solid rgba(142,198,232,.15);border-radius:6px;background:rgba(0,0,0,.2)}
+    .shop-product h3{margin:0;font:700 1.05rem var(--display)}
+    .shop-product p,.empty-state{margin:0;color:var(--muted);line-height:1.5}
+    .shop-price{color:var(--a);font-size:1.15rem;font-weight:800}
+    .shop-add{padding:10px 14px;border:1px solid rgba(142,198,232,.3);border-radius:6px;background:rgba(142,198,232,.08);color:var(--a);font-weight:700;cursor:pointer}
+    .shop-add:hover{border-color:var(--a);background:rgba(142,198,232,.16)}
+    .cart-row{display:grid;grid-template-columns:minmax(0,1fr) 100px auto 42px;gap:12px;align-items:center;padding:14px;border:1px solid rgba(142,198,232,.13);border-radius:6px;background:rgba(0,0,0,.18)}
+    .cart-row h3{margin:0;font-size:1rem}
+    .cart-row p{margin:4px 0 0;color:var(--muted);font-size:.9rem}
+    .cart-row input{padding:10px;border:1px solid rgba(142,198,232,.16);border-radius:6px;background:rgba(0,0,0,.38);color:var(--text)}
+    .admin-link{color:var(--a);font-size:.9rem;text-decoration:none}
+    .admin-link:hover{text-decoration:underline}
+    @media(max-width:600px){.cart-row{grid-template-columns:minmax(0,1fr) 78px 36px}.cart-row .line-price{grid-column:1}.cart-row .remove-item{grid-column:3;grid-row:1}}
     @media(max-width:680px){.card{padding:22px 16px 18px}.item-row{grid-template-columns:minmax(0,1fr) minmax(100px,.7fr) 42px}.item-row .price-field{grid-column:1/3}.remove-item{grid-column:3;grid-row:1}.summary-row{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
@@ -50,8 +64,8 @@
       <img class="brand-logo" src="/img/Ischia-famq.png" alt="Ischia FamQ Logo">
       <a class="back" href="/" aria-label="Zur Startseite">⌂ <span>Startseite</span></a>
     </div>
-    <h1>Wunsch-Bestellung</h1>
-    <p class="lead">Trage ein, welche Gegenstände du bestellen möchtest, und schlage deinen Preis pro Stück vor. Der Gesamtvorschlag wird automatisch berechnet.</p>
+    <h1>Shop &amp; Wunsch-Bestellung</h1>
+    <p class="lead">Lege verfügbare Produkte in den Warenkorb oder ergänze eigene Wunschgegenstände mit deinem Preisvorschlag.</p>
 
     <div class="form-shell">
       <section class="card">
@@ -59,7 +73,31 @@
           <img class="order-logo" src="/img/Ischia-famq.png" alt="Ischia FamQ Logo">
           <span class="highlight">Bestellung</span>
         </div>
-        <h2>Deine Wunschliste</h2>
+        <h2>Produkte im Shop</h2>
+        <div id="shop-products" class="shop-grid" aria-live="polite"><p class="empty-state">Produkte werden geladen …</p></div>
+        <p><a class="admin-link" href="/admin/catalog">Produktverwaltung (Admin)</a></p>
+      </section>
+      <section class="card">
+        <h2>Nicht im Katalog? Wunsch hinzufügen</h2>
+        <div class="item-row">
+          <div class="field">
+            <label for="custom-name">Wunschgegenstand</label>
+            <input id="custom-name" type="text" maxlength="80" placeholder="Gegenstand">
+          </div>
+          <div class="field">
+            <label for="custom-quantity">Menge</label>
+            <input id="custom-quantity" type="number" min="1" max="10000" step="1" value="1">
+          </div>
+          <div class="field price-field">
+            <label for="custom-price">Preisvorschlag / Stück ($)</label>
+            <input id="custom-price" type="number" min="1" max="1000000000" step="1" placeholder="Dein Vorschlag">
+          </div>
+          <button id="add-custom-item" class="add-item" type="button">+</button>
+        </div>
+        <p class="status" id="custom-item-status" aria-live="polite"></p>
+      </section>
+      <section class="card">
+        <h2>Dein Warenkorb</h2>
         <form id="custom-order-form">
           <div class="field">
             <label for="custom-ic-name">IC-Name</label>
@@ -70,14 +108,13 @@
             <input id="custom-phone" name="phone" type="tel" maxlength="40" placeholder="Deine IC-Handynummer" required>
           </div>
 
-          <div id="custom-items" class="items"></div>
-          <button id="add-item" class="add-item" type="button">+ Gegenstand hinzufügen</button>
+          <div id="custom-items" class="items"><p class="empty-state">Dein Warenkorb ist noch leer.</p></div>
 
           <div class="summary">
-            <div class="summary-row"><span>Positionen</span><strong id="custom-item-count">1</strong></div>
-            <div class="summary-row"><span>Gesamtpreisvorschlag</span><strong id="custom-total">0 $</strong></div>
+            <div class="summary-row"><span>Positionen</span><strong id="custom-item-count">0</strong></div>
+            <div class="summary-row"><span>Gesamtsumme</span><strong id="custom-total">0 $</strong></div>
           </div>
-          <button class="cta" type="submit">Wunsch-Bestellung senden</button>
+          <button class="cta" type="submit" disabled>Bestellung absenden</button>
           <div id="custom-status" class="status" aria-live="polite"></div>
         </form>
       </section>
