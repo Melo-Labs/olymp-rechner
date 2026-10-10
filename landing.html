@@ -29,7 +29,7 @@ h1{
 header p{margin:14px 0 0;color:var(--muted);font-size:clamp(1rem,1.5vw,1.15rem);letter-spacing:.04em}
 
 .grid{
-  width:min(1020px,100%);display:grid;grid-template-columns:1fr 1fr;
+  width:min(1260px,100%);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
   gap:clamp(20px,3.5vw,40px);
 }
 .slot{
@@ -39,6 +39,8 @@ header p{margin:14px 0 0;color:var(--muted);font-size:clamp(1rem,1.5vw,1.15rem);
   transition:filter .3s ease;
 }
 .slot.buy{--a:#c9bfb0;--t1:rgba(31,29,26,.84);--t2:rgba(13,12,11,.92)}
+.slot.stank{--a:#91c77b;--t1:rgba(25,32,24,.84);--t2:rgba(10,14,10,.92)}
+.slot.custom-order{--a:#8ec6e8;--t1:rgba(22,30,35,.84);--t2:rgba(9,13,16,.92)}
 .slot:hover,.slot:focus-within{filter:drop-shadow(0 0 28px color-mix(in srgb,var(--a) 38%,transparent))}
 
 .panel{
@@ -98,6 +100,9 @@ h2{margin:0;font:700 clamp(1.6rem,3vw,2.2rem)/1.15 var(--display);letter-spacing
   .grid{grid-template-columns:1fr}
   .panel{min-height:360px}
 }
+@media (min-width:761px) and (max-width:1050px){
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
 @media (prefers-reduced-motion:reduce){
   .aurora i,.hud .r1,.hud .r2,.panel:hover .scan{animation:none}
   .panel,.cta,.cta svg,.slot{transition:none}
@@ -109,7 +114,7 @@ h2{margin:0;font:700 clamp(1.6rem,3vw,2.2rem)/1.15 var(--display);letter-spacing
 
 <header>
   <h1>Wähle deinen Bereich</h1>
-  <p>Produktionsrechner oder Material Ankauf.</p>
+  <p>Produktionsrechner und Bestellungen.</p>
 </header>
 
 <main class="grid">
@@ -140,6 +145,36 @@ h2{margin:0;font:700 clamp(1.6rem,3vw,2.2rem)/1.15 var(--display);letter-spacing
       <h2>Material Ankauf</h2>
       <p>Bedarf, Lieferumfang und Bestellhinweise im Überblick.</p>
       <span class="cta">Ankauf öffnen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+    </a>
+  </div>
+
+  <div class="slot stank">
+    <a class="panel" href="/stank-kauf.html">
+      <span class="scan" aria-hidden="true"></span>
+      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="r1" cx="60" cy="60" r="56"/>
+        <circle class="r2" cx="60" cy="60" r="44"/>
+        <circle class="r3" cx="60" cy="60" r="32"/>
+        <g class="ic" transform="translate(42 42) scale(1.5)"><path d="M12 2c2 5-2 6-1 9 2-1 4-4 4-6 4 4 5 8 3 12a7 7 0 0 1-13-3c0-4 3-8 7-12z"/><path d="M12 14c2 2 1 5-1 6"/></g>
+      </svg>
+      <h2>STANK Kauf</h2>
+      <p>STANK-Pflanzen für 2.000 $ pro Stück bestellen.</p>
+      <span class="cta">STANK bestellen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+    </a>
+  </div>
+
+  <div class="slot custom-order">
+    <a class="panel" href="/freie-bestellung.html">
+      <span class="scan" aria-hidden="true"></span>
+      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="r1" cx="60" cy="60" r="56"/>
+        <circle class="r2" cx="60" cy="60" r="44"/>
+        <circle class="r3" cx="60" cy="60" r="32"/>
+        <g class="ic" transform="translate(42 42) scale(1.5)"><path d="M4 5h16v14H4z"/><path d="M8 2v6M16 2v6M7 12h3M14 12h3M7 16h3"/></g>
+      </svg>
+      <h2>Wunsch-Bestellung</h2>
+      <p>Wähle Gegenstände frei aus und schlage deinen Preis vor.</p>
+      <span class="cta">Bestellung erstellen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
     </a>
   </div>
 </main>

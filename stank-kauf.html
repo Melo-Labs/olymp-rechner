@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STANK Kauf</title>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    :root{--text:#ececec;--muted:#9a9da3;--a:#91c77b;--green:#7ee0a6;--red:#ff7b7b;--br:rgba(145,199,123,.5)}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;color:var(--text);font-family:var(--body);-webkit-font-smoothing:antialiased}
+    .wrap{width:min(960px,calc(100% - 32px));margin:0 auto;padding:clamp(28px,6vw,64px) 0 72px}
+    .topbar{display:flex;align-items:center;gap:16px;margin-bottom:22px}
+    .brand-logo{width:64px;height:64px;object-fit:cover;border-radius:50%;border:1px solid rgba(145,199,123,.5);background:#000;box-shadow:0 0 28px rgba(145,199,123,.18)}
+    .back{display:inline-flex;align-items:center;gap:8px;margin-left:auto;padding:10px 14px;border:1px solid rgba(145,199,123,.2);border-radius:6px;background:rgba(255,255,255,.03);color:var(--text);font-weight:700;text-decoration:none;transition:border-color .2s,box-shadow .2s}
+    .back:hover{border-color:var(--a);box-shadow:0 0 18px -6px rgba(145,199,123,.5)}
+    .back:focus-visible{outline:2px solid var(--a);outline-offset:3px}
+    h1{margin:0 0 14px;font:900 clamp(2rem,6vw,4rem)/1.05 var(--display);letter-spacing:.05em;text-shadow:0 0 20px rgba(145,199,123,.3)}
+    .lead{margin:0;max-width:62ch;color:var(--muted);line-height:1.6;font-size:clamp(1rem,1.5vw,1.15rem)}
+    .form-shell{display:grid;gap:24px;margin-top:28px;max-width:760px}
+    .card{position:relative;padding:28px 26px 24px;border:1px solid rgba(145,199,123,.16);border-radius:6px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 30px 50px -34px rgba(0,0,0,.9);background:linear-gradient(var(--br),var(--br)) 0 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/1px 14px no-repeat,linear-gradient(165deg,rgba(25,32,24,.84),rgba(10,14,10,.92))}
+    .card h2{margin:0 0 16px;font:700 1.25rem/1.2 var(--display);letter-spacing:.05em}
+    .order-header{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+    .order-logo{width:64px;height:64px;object-fit:cover;border-radius:50%;border:1px solid rgba(145,199,123,.5);background:#000;box-shadow:0 0 28px rgba(145,199,123,.18)}
+    .highlight{display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border:1px solid rgba(145,199,123,.4);border-radius:3px;color:var(--a);background:rgba(145,199,123,.06);font:700 .8rem var(--display);letter-spacing:.12em;margin-left:auto}
+    form{display:grid;gap:18px;margin-top:8px}
+    .field{display:grid;gap:8px}
+    label{font-size:1rem;font-weight:600;color:rgba(236,236,236,.92)}
+    input{width:100%;padding:15px 16px;border-radius:6px;border:1px solid rgba(145,199,123,.16);background:rgba(0,0,0,.38);color:var(--text);font:inherit;font-size:1.05rem;transition:border-color .2s,box-shadow .2s}
+    .quantity-control{display:grid;grid-template-columns:48px minmax(0,1fr) 48px;gap:8px}
+    .quantity-control button{border:1px solid rgba(145,199,123,.24);border-radius:6px;background:rgba(145,199,123,.08);color:var(--a);font:700 1.4rem/1 var(--display);cursor:pointer;transition:background .2s,border-color .2s}
+    .quantity-control button:hover{border-color:var(--a);background:rgba(145,199,123,.16)}
+    .quantity-control button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+    .quantity-control input{text-align:center}
+    input:hover{border-color:rgba(145,199,123,.4)}
+    input:focus{outline:none;border-color:var(--a);box-shadow:0 0 0 3px rgba(145,199,123,.14),0 0 24px -6px rgba(145,199,123,.4)}
+    input[readonly]{color:var(--muted)}
+    .summary{display:grid;gap:12px;padding:18px;border-radius:6px;border:1px dashed rgba(145,199,123,.22);background:rgba(145,199,123,.04)}
+    .summary-row{display:flex;justify-content:space-between;align-items:center;gap:16px;color:rgba(223,226,230,.9);line-height:1.4}
+    .summary-row strong{color:#fff;font-weight:700}
+    .summary-row:last-child{padding-top:12px;border-top:1px solid rgba(145,199,123,.14);font-size:1.1rem}
+    .cta{display:inline-flex;align-items:center;justify-content:center;width:100%;padding:15px 18px;border:0;border-radius:6px;background:linear-gradient(135deg,#d8edce,#91c77b);color:#10150e;font:700 .95rem var(--display);letter-spacing:.08em;cursor:pointer;transition:box-shadow .25s,transform .2s}
+    .cta:hover{transform:translateY(-1px);box-shadow:0 0 30px rgba(145,199,123,.4)}
+    .status{min-height:24px;font-size:.92rem;color:var(--muted);font-weight:600}
+    .status.error{color:var(--red)}.status.success{color:var(--green)}
+    @media(max-width:760px){.card{padding:22px 16px 18px}.summary-row{flex-direction:column;align-items:flex-start}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="topbar">
+      <img class="brand-logo" src="/img/Ischia-famq.png" alt="Ischia FamQ Logo">
+      <a class="back" href="/" aria-label="Zur Startseite">⌂ <span>Startseite</span></a>
+    </div>
+    <h1>STANK Kauf</h1>
+    <p class="lead">Bestelle STANK-Pflanzen für 2.000 $ pro Stück. Der Gesamtpreis wird automatisch berechnet.</p>
+
+    <div class="form-shell">
+      <section class="card">
+        <div class="order-header">
+          <img class="order-logo" src="/img/Ischia-famq.png" alt="Ischia FamQ Logo">
+          <span class="highlight">Bestellung</span>
+        </div>
+        <h2>STANK-Pflanzen</h2>
+        <form id="stank-order-form">
+          <div class="field">
+            <label for="stank-quantity">Anzahl STANK-Pflanzen</label>
+            <div class="quantity-control">
+              <button type="button" data-quantity-step="-1" aria-label="Eine STANK-Pflanze weniger">−</button>
+              <input id="stank-quantity" name="quantity" type="number" min="1" step="1" value="1" required>
+              <button type="button" data-quantity-step="1" aria-label="Eine STANK-Pflanze mehr">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="stank-ic-name">IC-Name</label>
+            <input id="stank-ic-name" name="icName" type="text" maxlength="80" autocomplete="name" placeholder="Dein IC-Name" required>
+          </div>
+          <div class="field">
+            <label for="stank-phone">Handynummer / IC</label>
+            <input id="stank-phone" name="phone" type="tel" maxlength="40" placeholder="Deine IC-Handynummer" required>
+          </div>
+          <div class="summary">
+            <div class="summary-row"><span>STANK-Pflanzen</span><strong id="stank-summary-quantity">1 × 2.000 $</strong></div>
+            <div class="summary-row"><span>Gesamtpreis</span><strong id="stank-summary-total">2.000 $</strong></div>
+          </div>
+          <button class="cta" type="submit">STANK bestellen</button>
+          <div id="stank-status" class="status" aria-live="polite"></div>
+        </form>
+      </section>
+    </div>
+  </main>
+  <script src="/bg.js"></script>
+  <script src="/stank-kauf.js"></script>
+</body>
+</html>

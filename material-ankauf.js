@@ -68,6 +68,15 @@ function updateSummary() {
   });
 });
 
+document.querySelectorAll('[data-material-step]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const input = document.getElementById(button.dataset.materialStep);
+    const current = Math.max(0, Number(input.value) || 0);
+    input.value = String(Math.max(0, current + Number(button.dataset.step)));
+    updateSummary();
+  });
+});
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const technical = Math.max(0, Number(technicalInput.value) || 0);

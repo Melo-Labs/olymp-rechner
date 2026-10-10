@@ -29,6 +29,8 @@ const COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === "true";
 const SESSION_TTL = 8 * 60 * 60 * 1000;
 const ROLE_CHECK_TTL = 60 * 1000;
 const ORDER_CHANNEL_ID = process.env.DISCORD_ORDER_CHANNEL_ID || "1558426870465302538";
+const STANK_ORDER_CHANNEL_ID = "1558497954921193592";
+const CUSTOM_ORDER_CHANNEL_ID = "1558508937400291338";
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
@@ -37,6 +39,10 @@ const staticFiles = new Map([
   ["/index.html", "landing.html"],
   ["/material-ankauf.html", "material-ankauf.html"],
   ["/material-ankauf.js", "material-ankauf.js"],
+  ["/stank-kauf.html", "stank-kauf.html"],
+  ["/stank-kauf.js", "stank-kauf.js"],
+  ["/freie-bestellung.html", "freie-bestellung.html"],
+  ["/freie-bestellung.js", "freie-bestellung.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/script.js", "script.js"],
   ["/style.css", "style.css"],
@@ -393,8 +399,8 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-function saveMaterialOrderLocally(order) {
-  const logPath = path.join(ROOT, "material-bestellungen.json");
+function saveOrderLocally(order, fileName) {
+  const logPath = path.join(ROOT, fileName);
   let list = [];
   try {
     if (fs.existsSync(logPath)) {
@@ -413,6 +419,69 @@ function saveMaterialOrderLocally(order) {
 
   fs.writeFileSync(logPath, JSON.stringify(list, null, 2), "utf8");
   return logPath;
+}
+
+function saveMaterialOrderLocally(order) {
+  return saveOrderLocally(order, "material-bestellungen.json");
+}
+
+function buildStankOrderPayload(order) {
+  return {
+    content: "🌿 Neue STANK-Bestellung",
+    embeds: [{
+      title: "Neue STANK-Bestellung",
+      description: "Eine neue Bestellung von STANK-Pflanzen wurde erfasst.",
+      color: 0x70ad5b,
+      fields: [
+        { name: "IC-Name", value: order.icName, inline: true },
+        { name: "Handynummer / IC", value: order.phone, inline: true },
+        { name: "STANK-Pflanzen", value: `${order.quantity}`, inline: true },
+        { name: "Preis pro Pflanze", value: "2.000 $", inline: true },
+        { name: "Gesamtpreis", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true }
+      ],
+      footer: { text: "Olymp Rechner • STANK-Kauf" },
+      timestamp: new Date().toISOString()
+    }],
+    components: [{
+      type: 1,
+      components: [
+        { type: 2, style: 2, label: "Kontaktaufnahme", custom_id: "stank_order_contact" },
+        { type: 2, style: 3, label: "Ausgeliefert", custom_id: "stank_order_delivered" },
+        { type: 2, style: 4, label: "Abgelehnt", custom_id: "stank_order_rejected" }
+      ]
+    }],
+    allowed_mentions: { parse: [] }
+  };
+}
+
+function buildCustomOrderPayload(order) {
+  const itemList = order.items.map((item, index) =>
+    `**${index + 1}. ${item.name}** — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $ Vorschlag = ${item.totalPrice.toLocaleString("de-DE")} $`
+  ).join("\n");
+  return {
+    content: "🛒 Neue Wunsch-Bestellung",
+    embeds: [{
+      title: "Neue Wunsch-Bestellung",
+      description: itemList,
+      color: 0x5ba6cb,
+      fields: [
+        { name: "IC-Name", value: order.icName, inline: true },
+        { name: "Handynummer / IC", value: order.phone, inline: true },
+        { name: "Gesamtpreisvorschlag", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true }
+      ],
+      footer: { text: "Olymp Rechner • Wunsch-Bestellung" },
+      timestamp: new Date().toISOString()
+    }],
+    components: [{
+      type: 1,
+      components: [
+        { type: 2, style: 2, label: "Kontaktaufnahme", custom_id: "custom_order_contact" },
+        { type: 2, style: 3, label: "Ausgeliefert", custom_id: "custom_order_delivered" },
+        { type: 2, style: 4, label: "Abgelehnt", custom_id: "custom_order_rejected" }
+      ]
+    }],
+    allowed_mentions: { parse: [] }
+  };
 }
 
 function buildMaterialOrderPayload(order) {
@@ -507,9 +576,9 @@ async function handleDiscordInteraction(req, res) {
 
   if (payload.type === 3 && payload.data?.component_type === 2) {
     const action = payload.data.custom_id;
-    if (action === "material_order_contact") {
+    if (action === "material_order_contact" || action === "stank_order_contact" || action === "custom_order_contact") {
       const phone = payload.message?.embeds?.[0]?.fields
-        ?.find(field => field.name === "Handynummer")?.value;
+        ?.find(field => field.name === "Handynummer" || field.name === "Handynummer / IC")?.value;
       send(res, 200, JSON.stringify({
         type: 4,
         data: {
@@ -522,7 +591,7 @@ async function handleDiscordInteraction(req, res) {
       return;
     }
 
-    if (action !== "material_order_delivered" && action !== "material_order_rejected") {
+    if (!["material_order_delivered", "material_order_rejected", "stank_order_delivered", "stank_order_rejected", "custom_order_delivered", "custom_order_rejected"].includes(action)) {
       send(res, 200, JSON.stringify({
         type: 4,
         data: { content: "Unbekannte Bestellaktion.", flags: 64 }
@@ -530,7 +599,7 @@ async function handleDiscordInteraction(req, res) {
       return;
     }
 
-    const status = action === "material_order_delivered" ? "Ausgeliefert" : "Abgelehnt";
+    const status = action.endsWith("_delivered") ? "Ausgeliefert" : "Abgelehnt";
     send(res, 200, JSON.stringify({
       type: 7,
       data: {
@@ -544,11 +613,11 @@ async function handleDiscordInteraction(req, res) {
   send(res, 200, JSON.stringify({ type: 4, data: { content: "Interaction verarbeitet." } }), "application/json; charset=utf-8");
 }
 
-async function postToDiscordChannel(orderMessage) {
+async function postToDiscordChannel(orderMessage, channelId = ORDER_CHANNEL_ID, allowWebhook = true) {
   const config = discordConfig();
   const payload = typeof orderMessage === "string" ? { content: orderMessage, allowed_mentions: { parse: [] } } : orderMessage;
 
-  if (ORDER_WEBHOOK_URL) {
+  if (allowWebhook && ORDER_WEBHOOK_URL) {
     const response = await discordFetch(ORDER_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -562,7 +631,7 @@ async function postToDiscordChannel(orderMessage) {
   }
 
   if (config.botToken) {
-    const response = await discordFetch(`https://discord.com/api/v10/channels/${encodeURIComponent(ORDER_CHANNEL_ID)}/messages`, {
+    const response = await discordFetch(`https://discord.com/api/v10/channels/${encodeURIComponent(channelId)}/messages`, {
       method: "POST",
       headers: {
         Authorization: `Bot ${config.botToken}`,
@@ -666,6 +735,186 @@ async function handleMaterialOrder(req, res) {
   }
 }
 
+async function handleStankOrder(req, res) {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (Buffer.byteLength(body, "utf8") > 256000) {
+      send(res, 413, JSON.stringify({ ok: false, message: "Anfrage zu groß." }), "application/json; charset=utf-8");
+      return;
+    }
+  }
+
+  let payload = {};
+  try {
+    payload = body ? JSON.parse(body) : {};
+  } catch {
+    send(res, 400, JSON.stringify({ ok: false, message: "Ungültige Formulardaten." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const quantity = Number(payload.quantity);
+  const icName = String(payload.icName || "").trim();
+  const phone = String(payload.phone || "").trim();
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > Math.floor(Number.MAX_SAFE_INTEGER / 2000)
+    || !icName || icName.length > 80 || !phone || phone.length > 40) {
+    send(res, 400, JSON.stringify({ ok: false, message: "Bitte alle Felder korrekt ausfüllen." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const totalPrice = quantity * 2000;
+  const order = {
+    type: "stank",
+    quantity,
+    icName,
+    phone,
+    totalPrice,
+    message: `🌿 Neue STANK-Bestellung\n` +
+      `IC-Name: ${icName}\n` +
+      `Handynummer / IC: ${phone}\n` +
+      `STANK-Pflanzen: ${quantity}\n` +
+      `Gesamtpreis: ${totalPrice.toLocaleString("de-DE")} $`
+  };
+
+  try {
+    const result = await postToDiscordChannel(
+      buildStankOrderPayload(order),
+      STANK_ORDER_CHANNEL_ID,
+      false
+    );
+    if (result.method === "local-only") {
+      saveOrderLocally(order, "stank-bestellungen.json");
+      send(res, 200, JSON.stringify({
+        ok: true,
+        total: totalPrice,
+        orderCount: quantity,
+        channelId: STANK_ORDER_CHANNEL_ID,
+        savedLocally: true,
+        message: "Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch."
+      }), "application/json; charset=utf-8");
+      return;
+    }
+
+    send(res, 200, JSON.stringify({
+      ok: true,
+      total: totalPrice,
+      orderCount: quantity,
+      channelId: STANK_ORDER_CHANNEL_ID,
+      savedLocally: false,
+      message: "STANK-Bestellung wurde erfolgreich an Discord gesendet."
+    }), "application/json; charset=utf-8");
+  } catch (error) {
+    console.error("STANK-Bestellung fehlgeschlagen:", error.message);
+    saveOrderLocally(order, "stank-bestellungen.json");
+    send(res, 200, JSON.stringify({
+      ok: true,
+      total: totalPrice,
+      orderCount: quantity,
+      channelId: STANK_ORDER_CHANNEL_ID,
+      savedLocally: true,
+      message: "Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar."
+    }), "application/json; charset=utf-8");
+  }
+}
+
+async function handleCustomOrder(req, res) {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (Buffer.byteLength(body, "utf8") > 256000) {
+      send(res, 413, JSON.stringify({ ok: false, message: "Anfrage zu groß." }), "application/json; charset=utf-8");
+      return;
+    }
+  }
+
+  let payload = {};
+  try {
+    payload = body ? JSON.parse(body) : {};
+  } catch {
+    send(res, 400, JSON.stringify({ ok: false, message: "Ungültige Formulardaten." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const icName = String(payload.icName || "").trim();
+  const phone = String(payload.phone || "").trim();
+  if (!icName || icName.length > 80 || !phone || phone.length > 40
+    || !Array.isArray(payload.items) || payload.items.length < 1 || payload.items.length > 10) {
+    send(res, 400, JSON.stringify({ ok: false, message: "Bitte Kontaktdaten und 1 bis 10 gültige Positionen angeben." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const items = [];
+  let totalPrice = 0;
+  for (const entry of payload.items) {
+    const name = String(entry?.name || "").trim();
+    const quantity = Number(entry?.quantity);
+    const pricePerItem = Number(entry?.pricePerItem);
+    if (!name || name.length > 80 || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10000
+      || !Number.isSafeInteger(pricePerItem) || pricePerItem < 1 || pricePerItem > 1000000000) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Jede Position braucht Gegenstand, ganze Stückzahl und einen positiven Preisvorschlag." }), "application/json; charset=utf-8");
+      return;
+    }
+    const itemTotal = quantity * pricePerItem;
+    if (!Number.isSafeInteger(itemTotal) || !Number.isSafeInteger(totalPrice + itemTotal)) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Der Gesamtpreisvorschlag ist zu hoch." }), "application/json; charset=utf-8");
+      return;
+    }
+    items.push({ name, quantity, pricePerItem, totalPrice: itemTotal });
+    totalPrice += itemTotal;
+  }
+
+  const order = {
+    type: "custom",
+    icName,
+    phone,
+    items,
+    totalPrice,
+    message: `🛒 Neue Wunsch-Bestellung\nIC-Name: ${icName}\nHandynummer / IC: ${phone}\n` +
+      items.map((item, index) => `${index + 1}. ${item.name} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
+      `\nGesamtpreisvorschlag: ${totalPrice} $`
+  };
+
+  try {
+    const result = await postToDiscordChannel(
+      buildCustomOrderPayload(order),
+      CUSTOM_ORDER_CHANNEL_ID,
+      false
+    );
+    if (result.method === "local-only") {
+      saveOrderLocally(order, "wunsch-bestellungen.json");
+      send(res, 200, JSON.stringify({
+        ok: true,
+        total: totalPrice,
+        orderCount: items.length,
+        channelId: CUSTOM_ORDER_CHANNEL_ID,
+        savedLocally: true,
+        message: "Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch."
+      }), "application/json; charset=utf-8");
+      return;
+    }
+
+    send(res, 200, JSON.stringify({
+      ok: true,
+      total: totalPrice,
+      orderCount: items.length,
+      channelId: CUSTOM_ORDER_CHANNEL_ID,
+      savedLocally: false,
+      message: "Wunsch-Bestellung wurde erfolgreich an Discord gesendet."
+    }), "application/json; charset=utf-8");
+  } catch (error) {
+    console.error("Wunsch-Bestellung fehlgeschlagen:", error.message);
+    saveOrderLocally(order, "wunsch-bestellungen.json");
+    send(res, 200, JSON.stringify({
+      ok: true,
+      total: totalPrice,
+      orderCount: items.length,
+      channelId: CUSTOM_ORDER_CHANNEL_ID,
+      savedLocally: true,
+      message: "Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar."
+    }), "application/json; charset=utf-8");
+  }
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const pathname = url.pathname;
@@ -676,6 +925,14 @@ async function handleRequest(req, res) {
   }
   if (req.method === "POST" && pathname === "/api/material-bestellung") {
     await handleMaterialOrder(req, res);
+    return;
+  }
+  if (req.method === "POST" && pathname === "/api/stank-bestellung") {
+    await handleStankOrder(req, res);
+    return;
+  }
+  if (req.method === "POST" && pathname === "/api/wunsch-bestellung") {
+    await handleCustomOrder(req, res);
     return;
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
@@ -705,7 +962,7 @@ async function handleRequest(req, res) {
     redirect(res, "/login");
     return;
   }
-  if (pathname === "/" || pathname === "/index.html" || pathname === "/material-ankauf.html" || pathname === "/theme.css" || pathname === "/bg.js" || pathname === "/material-ankauf.js" || pathname.startsWith("/img/")) {
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {
     serveStatic(req, res, pathname === "/index.html" ? "/index.html" : pathname);
     return;
   }

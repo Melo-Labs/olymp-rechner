@@ -29,6 +29,11 @@
     .field{display:grid;gap:8px}
     label{font-size:1rem;font-weight:600;color:rgba(236,236,236,.92)}
     input{width:100%;padding:15px 16px;border-radius:6px;border:1px solid rgba(228,232,238,.16);background:rgba(0,0,0,.38);color:var(--text);font:inherit;font-size:1.05rem;transition:border-color .2s,box-shadow .2s}
+    .quantity-control{display:grid;grid-template-columns:48px minmax(0,1fr) 48px;gap:8px}
+    .quantity-control button{border:1px solid rgba(228,232,238,.24);border-radius:6px;background:rgba(228,232,238,.08);color:var(--a);font:700 1.4rem/1 var(--display);cursor:pointer;transition:background .2s,border-color .2s}
+    .quantity-control button:hover{border-color:var(--a);background:rgba(228,232,238,.16)}
+    .quantity-control button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+    .quantity-control input{text-align:center}
     input:hover{border-color:rgba(228,232,238,.4)}
     input:focus{outline:none;border-color:var(--a);box-shadow:0 0 0 3px rgba(228,232,238,.14),0 0 24px -6px rgba(228,232,238,.4)}
     input[readonly]{color:var(--muted)}
@@ -69,12 +74,20 @@
         <form id="order-form">
           <div class="field">
             <label for="technical">Technische Materialien</label>
-            <input id="technical" name="technical" type="number" min="0" step="250" value="0" required>
+            <div class="quantity-control">
+              <button type="button" data-material-step="technical" data-step="-250" aria-label="250 technische Materialien weniger">−</button>
+              <input id="technical" name="technical" type="number" min="0" step="250" value="0" required>
+              <button type="button" data-material-step="technical" data-step="250" aria-label="250 technische Materialien mehr">+</button>
+            </div>
           </div>
 
           <div class="field">
             <label for="medical">Medizinische Materialien</label>
-            <input id="medical" name="medical" type="number" min="0" step="250" value="0" required>
+            <div class="quantity-control">
+              <button type="button" data-material-step="medical" data-step="-250" aria-label="250 medizinische Materialien weniger">−</button>
+              <input id="medical" name="medical" type="number" min="0" step="250" value="0" required>
+              <button type="button" data-material-step="medical" data-step="250" aria-label="250 medizinische Materialien mehr">+</button>
+            </div>
           </div>
 
           <div class="field">
