@@ -179,7 +179,13 @@ async function exchangeCode(config, code, verifier) {
     body
   });
   const data = parseJson(await response.text());
-  if (!response.ok || !data?.access_token) throw new Error("Discord token exchange failed");
+  if (!response.ok || !data?.access_token) {
+    const reason = [data?.error, data?.error_description]
+      .filter(Boolean)
+      .join(": ")
+      .slice(0, 240);
+    throw new Error(`Discord token exchange failed (HTTP ${response.status}${reason ? `, ${reason}` : ""})`);
+  }
   return data;
 }
 
@@ -417,6 +423,7 @@ function buildMaterialOrderPayload(order) {
       description: "Eine neue Bestellung wurde im Rechner erfasst.",
       color: 0x2ea6ff,
       fields: [
+        { name: "IC-Name", value: order.icName || "—", inline: true },
         { name: "Technische Materialien", value: `${order.technical}`, inline: true },
         { name: "Medizinische Materialien", value: `${order.medical}`, inline: true },
         { name: "Gesamtanzahl", value: `${order.totalMaterials}`, inline: true },
@@ -594,9 +601,10 @@ async function handleMaterialOrder(req, res) {
 
   const technical = Number(payload.technical ?? 0);
   const medical = Number(payload.medical ?? 0);
+  const icName = String(payload.icName || "").trim();
   const phone = String(payload.phone || "").trim();
 
-  if (!Number.isFinite(technical) || !Number.isFinite(medical) || technical < 0 || medical < 0 || !phone) {
+  if (!Number.isFinite(technical) || !Number.isFinite(medical) || technical < 0 || medical < 0 || !icName || icName.length > 80 || !phone || phone.length > 40) {
     send(res, 400, JSON.stringify({ ok: false, message: "Bitte alle Felder korrekt ausfüllen." }), "application/json; charset=utf-8");
     return;
   }
@@ -606,6 +614,7 @@ async function handleMaterialOrder(req, res) {
   const order = {
     technical,
     medical,
+    icName,
     phone,
     totalMaterials,
     totalPrice,
@@ -613,6 +622,7 @@ async function handleMaterialOrder(req, res) {
       `Technische Materialien: ${technical}\n` +
       `Medizinische Materialien: ${medical}\n` +
       `Gesamtanzahl: ${totalMaterials}\n` +
+      `IC-Name: ${icName}\n` +
       `Handynummer: ${phone}\n` +
       `Gesamtpreis: ${totalPrice} $\n` +
       `Zeitstempel: ${new Date().toLocaleString("de-DE")}`

@@ -72,7 +72,14 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const technical = Math.max(0, Number(technicalInput.value) || 0);
   const medical = Math.max(0, Number(medicalInput.value) || 0);
+  const icName = document.getElementById('ic-name').value.trim();
   const phone = document.getElementById('phone').value.trim();
+
+  if (!icName) {
+    statusBox.textContent = 'Bitte gib deinen IC-Namen ein.';
+    statusBox.className = 'status error';
+    return;
+  }
 
   if (!phone) {
     statusBox.textContent = 'Bitte gib eine Handynummer ein.';
@@ -89,6 +96,7 @@ form.addEventListener('submit', async (event) => {
   const payload = {
     technical,
     medical,
+    icName,
     phone,
     totalMaterials: technical + medical,
     totalPrice: technical * 250 + medical * 150
@@ -115,6 +123,7 @@ form.addEventListener('submit', async (event) => {
     form.reset();
     technicalInput.value = '0';
     medicalInput.value = '0';
+    document.getElementById('ic-name').value = '';
     document.getElementById('phone').value = '';
     updateSummary();
   } catch (error) {

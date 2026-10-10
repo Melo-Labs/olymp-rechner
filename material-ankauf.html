@@ -13,7 +13,9 @@
     .topbar{display:flex;align-items:center;gap:16px;margin-bottom:22px}
     .brand{display:inline-flex;align-items:center}
     .brand-logo,.order-logo{width:64px;height:64px;object-fit:cover;border-radius:50%;border:1px solid rgba(228,232,238,.5);background:#000;box-shadow:0 0 28px rgba(228,232,238,.18)}
-    .back{display:none}
+    .back{display:inline-flex;align-items:center;gap:8px;margin-left:auto;padding:10px 14px;border:1px solid rgba(228,232,238,.16);border-radius:6px;background:rgba(255,255,255,.03);color:var(--text);font-weight:700;text-decoration:none;transition:border-color .2s,box-shadow .2s}
+    .back:hover{border-color:var(--a);box-shadow:0 0 18px -6px rgba(228,232,238,.5)}
+    .back:focus-visible{outline:2px solid var(--a);outline-offset:3px}
     h1{margin:0 0 14px;font:900 clamp(2rem,6vw,4rem)/1.05 var(--display);letter-spacing:.05em;text-shadow:0 0 20px rgba(255,255,255,.3)}
     .lead{margin:0;max-width:62ch;color:var(--muted);line-height:1.6;font-size:clamp(1rem,1.5vw,1.15rem)}
     .form-shell{display:grid;gap:24px;margin-top:28px;max-width:760px}
@@ -50,6 +52,7 @@
       <div class="brand" aria-label="Logo">
         <img class="brand-logo" src="/img/Ischia-famq.png" alt="Ischia FamQ Logo">
       </div>
+      <a class="back" href="/" aria-label="Zur Startseite">⌂ <span>Startseite</span></a>
     </div>
 
     <h1>Material Ankauf</h1>
@@ -75,8 +78,13 @@
           </div>
 
           <div class="field">
+            <label for="ic-name">IC-Name</label>
+            <input id="ic-name" name="icName" type="text" maxlength="80" autocomplete="name" placeholder="Dein IC-Name" required>
+          </div>
+
+          <div class="field">
             <label for="phone">Handynummer / IC</label>
-            <input id="phone" name="phone" type="tel" placeholder="Deine IC-Handynummer" required>
+            <input id="phone" name="phone" type="tel" maxlength="40" placeholder="Deine IC-Handynummer" required>
           </div>
 
           <div class="field">
