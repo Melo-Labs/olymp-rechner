@@ -410,7 +410,6 @@ function saveMaterialOrderLocally(order) {
 }
 
 function buildMaterialOrderPayload(order) {
-  const contactPhone = String(order.phone || "").replace(/[^\d+]/g, "");
   return {
     content: "📦 Neue Material-Bestellung",
     embeds: [{
@@ -433,9 +432,9 @@ function buildMaterialOrderPayload(order) {
       components: [
         {
           type: 2,
-          style: 5,
+          style: 2,
           label: "Kontaktaufnahme",
-          url: contactPhone ? `tel:${contactPhone}` : "https://example.com/contact"
+          custom_id: "material_order_contact"
         },
         {
           type: 2,
@@ -455,10 +454,10 @@ function buildMaterialOrderPayload(order) {
   };
 }
 
-function verifyDiscordInteraction(rawBody, signatureHex, timestamp, publicKey) {
+async function verifyDiscordInteraction(rawBody, signatureHex, timestamp, publicKey) {
   if (!signatureHex || !timestamp || !publicKey) return false;
   try {
-    return verifyKey(rawBody, signatureHex, timestamp, publicKey);
+    return await verifyKey(rawBody, signatureHex, timestamp, publicKey);
   } catch {
     return false;
   }
@@ -481,7 +480,7 @@ async function handleDiscordInteraction(req, res) {
 
   const signature = req.headers["x-signature-ed25519"];
   const timestamp = req.headers["x-signature-timestamp"];
-  if (!verifyDiscordInteraction(rawBody, String(signature || ""), String(timestamp || ""), config.publicKey)) {
+  if (!await verifyDiscordInteraction(rawBody, String(signature || ""), String(timestamp || ""), config.publicKey)) {
     send(res, 401, JSON.stringify({ error: "Invalid request signature" }), "application/json; charset=utf-8");
     return;
   }
@@ -500,11 +499,35 @@ async function handleDiscordInteraction(req, res) {
   }
 
   if (payload.type === 3 && payload.data?.component_type === 2) {
-    const action = payload.data.custom_id === "material_order_delivered" ? "Ausgeliefert" : "Abgelehnt";
+    const action = payload.data.custom_id;
+    if (action === "material_order_contact") {
+      const phone = payload.message?.embeds?.[0]?.fields
+        ?.find(field => field.name === "Handynummer")?.value;
+      send(res, 200, JSON.stringify({
+        type: 4,
+        data: {
+          content: phone
+            ? `📞 Kontaktaufnahme: ${phone}`
+            : "Für diese Bestellung ist keine Telefonnummer hinterlegt.",
+          flags: 64
+        }
+      }), "application/json; charset=utf-8");
+      return;
+    }
+
+    if (action !== "material_order_delivered" && action !== "material_order_rejected") {
+      send(res, 200, JSON.stringify({
+        type: 4,
+        data: { content: "Unbekannte Bestellaktion.", flags: 64 }
+      }), "application/json; charset=utf-8");
+      return;
+    }
+
+    const status = action === "material_order_delivered" ? "Ausgeliefert" : "Abgelehnt";
     send(res, 200, JSON.stringify({
       type: 7,
       data: {
-        content: `✅ Bestellung wurde als ${action} markiert.`,
+        content: `✅ Bestellung wurde als ${status} markiert.`,
         components: []
       }
     }), "application/json; charset=utf-8");
@@ -542,7 +565,8 @@ async function postToDiscordChannel(orderMessage) {
     });
     const data = parseJson(await response.text());
     if (!response.ok) {
-      throw new Error(data?.message || "Discord-API fehlgeschlagen.");
+      const details = data?.errors ? ` ${JSON.stringify(data.errors)}` : "";
+      throw new Error(`${data?.message || "Discord-API fehlgeschlagen."}${details}`);
     }
     return { method: "bot" };
   }
