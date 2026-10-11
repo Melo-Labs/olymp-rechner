@@ -30,6 +30,7 @@ const ROLE_CHECK_TTL = 60 * 1000;
 const ORDER_CHANNEL_ID = process.env.DISCORD_ORDER_CHANNEL_ID || "1558426870465302538";
 const STANK_ORDER_CHANNEL_ID = "1558497954921193592";
 const CUSTOM_ORDER_CHANNEL_ID = "1558508937400291338";
+const SELL_OFFER_CHANNEL_ID = process.env.DISCORD_SELL_OFFER_CHANNEL_ID || "1558812539805110434";
 const CATALOG_AUDIT_CHANNEL_ID = "1558539114662330419";
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
@@ -59,6 +60,8 @@ let catalogAuditInProgress = false;
 const staticFiles = new Map([
   ["/", "landing.html"],
   ["/index.html", "landing.html"],
+  ["/ankauf.html", "ankauf.html"],
+  ["/ankauf.js", "ankauf.js"],
   ["/material-ankauf.html", "material-ankauf.html"],
   ["/material-ankauf.js", "material-ankauf.js"],
   ["/stank-kauf.html", "stank-kauf.html"],
@@ -979,6 +982,79 @@ async function handleMaterialOrder(req, res) {
   }
 }
 
+async function handleSellOffer(req, res) {
+  let payload;
+  try {
+    payload = JSON.parse(await readRequestBody(req, 256 * 1024));
+  } catch (error) {
+    const tooLarge = error.message === "Request body too large.";
+    send(res, tooLarge ? 413 : 400, JSON.stringify({
+      ok: false,
+      message: tooLarge ? "Anfrage zu groß." : "Ungültige Formulardaten."
+    }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const offer = String(payload?.offer || "").trim();
+  const icName = String(payload?.icName || "").trim();
+  const phone = String(payload?.phone || "").trim();
+  if (!offer || offer.length > 2000 || !icName || icName.length > 80 || !phone || phone.length > 40) {
+    send(res, 400, JSON.stringify({ ok: false, message: "Bitte Angebot, IC-Name und Telefonnummer korrekt ausfüllen." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const sellOffer = {
+    type: "sell-offer",
+    offer,
+    icName,
+    phone,
+    status: "Neu",
+    createdAt: new Date().toISOString()
+  };
+  const discordPayload = {
+    content: "💰 Neues Ankauf-Angebot",
+    embeds: [{
+      title: "Neues Ankauf-Angebot",
+      description: offer,
+      color: 0xd7ad72,
+      fields: [
+        { name: "IC-Name", value: icName, inline: true },
+        { name: "Telefonnummer", value: phone, inline: true }
+      ],
+      footer: { text: "Olymp Rechner • Ankauf" },
+      timestamp: sellOffer.createdAt
+    }],
+    allowed_mentions: { parse: [] }
+  };
+
+  try {
+    const result = await postToDiscordChannel(discordPayload, SELL_OFFER_CHANNEL_ID);
+    if (result.method === "local-only") {
+      saveOrderLocally(sellOffer, "ankauf-angebote.json");
+      send(res, 200, JSON.stringify({
+        ok: true,
+        savedLocally: true,
+        message: "Angebot lokal gespeichert. Die Discord-Konfiguration fehlt noch."
+      }), "application/json; charset=utf-8");
+      return;
+    }
+
+    send(res, 200, JSON.stringify({
+      ok: true,
+      savedLocally: false,
+      message: "Dein Ankauf-Angebot wurde erfolgreich gesendet."
+    }), "application/json; charset=utf-8");
+  } catch (error) {
+    console.error("Ankauf-Angebot konnte nicht an Discord gesendet werden:", error.message);
+    saveOrderLocally(sellOffer, "ankauf-angebote.json");
+    send(res, 200, JSON.stringify({
+      ok: true,
+      savedLocally: true,
+      message: "Angebot lokal gespeichert. Der Discord-Upload war nicht verfügbar."
+    }), "application/json; charset=utf-8");
+  }
+}
+
 async function handleStankOrder(req, res) {
   let body = "";
   for await (const chunk of req) {
@@ -1196,6 +1272,10 @@ async function handleRequest(req, res) {
     await handleMaterialOrder(req, res);
     return;
   }
+  if (req.method === "POST" && pathname === "/api/ankauf-angebot") {
+    await handleSellOffer(req, res);
+    return;
+  }
   if (req.method === "POST" && pathname === "/api/stank-bestellung") {
     await handleStankOrder(req, res);
     return;
@@ -1322,7 +1402,7 @@ async function handleRequest(req, res) {
     serveStatic(req, res, pathname);
     return;
   }
-  if (pathname === "/" || pathname === "/index.html" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/ankauf.html" || pathname === "/ankauf.js" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {
     serveStatic(req, res, pathname === "/index.html" ? "/index.html" : pathname);
     return;
   }
