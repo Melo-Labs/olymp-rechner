@@ -6,12 +6,15 @@
   <title>Produktverwaltung</title>
   <link rel="stylesheet" href="/theme.css">
   <style>
+    :root{--bg:#0b0d10;--line:rgba(142,198,232,.18);--mut:#b4bec8;--text:#edf3fb;--ok:#72d9b1;--bad:#ff8f8f;--accent:#8ec6e8;--tx:var(--text);--ac:var(--accent)}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:radial-gradient(circle at top,rgba(142,198,232,.14),transparent 30%),var(--bg);color:var(--text);font:16px/1.5 var(--body),system-ui,sans-serif}
     main{max-width:960px;margin:0 auto;padding:32px 16px 64px}
-    .topbar{display:flex;align-items:center;gap:14px;margin-bottom:24px}
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:24px}
     .back{color:var(--tx);text-decoration:none;font-weight:700;margin-left:auto}
     h1{margin:0 0 8px;font-size:clamp(1.8rem,5vw,3rem)}
     .lead,.hint{color:var(--mut);line-height:1.6}
-    .panel{padding:20px}
+    .panel{padding:20px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(21,25,29,.96),rgba(10,12,14,.96));box-shadow:0 28px 34px -28px rgba(0,0,0,.9)}
     .product-list{display:grid;gap:14px}
     .product{display:grid;grid-template-columns:120px minmax(150px,1.4fr) minmax(180px,2fr) minmax(130px,.8fr) auto auto;gap:12px;align-items:end;padding:16px;border:1px solid rgba(142,198,232,.16);border-radius:14px;background:linear-gradient(180deg,rgba(17,20,24,.9),rgba(9,13,16,.82));box-shadow:0 18px 24px -24px rgba(0,0,0,.9)}
     .image-field{display:grid;gap:8px;align-self:stretch}

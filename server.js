@@ -235,39 +235,15 @@ async function exchangeCode(config, code, verifier) {
   return data;
 }
 
-async function refreshToken(session, config) {
-  if (!session.refreshToken) throw new Error("Discord session expired");
-  const body = new URLSearchParams({
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    grant_type: "refresh_token",
-    refresh_token: session.refreshToken
-  });
-  const response = await discordFetch("https://discord.com/api/v10/oauth2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body
-  });
-  const data = parseJson(await response.text());
-  if (!response.ok || !data?.access_token) throw new Error("Discord token refresh failed");
-  session.accessToken = data.access_token;
-  session.refreshToken = data.refresh_token || session.refreshToken;
-  session.tokenExpiresAt = Date.now() + (Number(data.expires_in) || 0) * 1000;
-}
-
 async function memberHasRole(session, config, roleId = config.roleId) {
-  if (session.tokenExpiresAt <= Date.now() + 30000) await refreshToken(session, config);
-  const requestMember = () => discordFetch(`https://discord.com/api/v10/users/@me/guilds/${encodeURIComponent(config.guildId)}/member`, {
-    headers: { Authorization: `Bearer ${session.accessToken}` }
+  const response = await discordFetch(`https://discord.com/api/v10/guilds/${encodeURIComponent(config.guildId)}/members/${encodeURIComponent(session.userId)}`, {
+    headers: { Authorization: `Bot ${config.botToken}` }
   });
-  let response = await requestMember();
-  if (response.status === 401) {
-    await refreshToken(session, config);
-    response = await requestMember();
-  }
-  if (response.status === 403 || response.status === 404) return false;
+  if (response.status === 404) return false;
   const member = parseJson(await response.text());
-  if (!response.ok || !Array.isArray(member?.roles)) throw new Error("Discord membership check failed");
+  if (!response.ok || !Array.isArray(member?.roles)) {
+    throw new Error(`Discord membership check failed (HTTP ${response.status}, code ${member?.code ?? "unknown"}: ${String(member?.message || "unknown response").slice(0, 160)})`);
+  }
   return member.roles.includes(roleId);
 }
 
@@ -347,7 +323,7 @@ async function beginLogin(req, res, config) {
     client_id: config.clientId,
     response_type: "code",
     redirect_uri: config.redirectUri,
-    scope: "identify guilds.members.read",
+    scope: "identify",
     state,
     code_challenge: challenge,
     code_challenge_method: "S256"
@@ -385,9 +361,6 @@ async function finishLogin(req, res, url, config) {
       userId: user.id,
       discordName: String(user.global_name || user.username || "Unbekannt").slice(0, 80),
       username: String(user.username || "Unbekannt").slice(0, 80),
-      accessToken: token.access_token,
-      refreshToken: token.refresh_token,
-      tokenExpiresAt: Date.now() + (Number(token.expires_in) || 0) * 1000,
       sessionExpiresAt: Date.now() + SESSION_TTL,
       roleCheckedAt: 0
     };
