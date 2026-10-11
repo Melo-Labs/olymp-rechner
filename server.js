@@ -52,7 +52,6 @@ function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
 
 const CATALOG_FILE = resolvePersistentDataFile("CATALOG_FILE", "data/shop-products.json", LEGACY_CATALOG_FILE);
 const CATALOG_AUDIT_PENDING_FILE = resolvePersistentDataFile("CATALOG_AUDIT_PENDING_FILE", "data/shop-audit-pending.json", LEGACY_CATALOG_AUDIT_PENDING_FILE);
-const ADMIN_ORDERS_FILE = resolvePersistentDataFile("ADMIN_ORDERS_FILE", "data/admin-orders.json", null);
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
@@ -68,8 +67,6 @@ const staticFiles = new Map([
   ["/freie-bestellung.js", "freie-bestellung.js"],
   ["/admin/catalog", "catalog-admin.html"],
   ["/admin/catalog.js", "catalog-admin.js"],
-  ["/admin/orders", "admin-orders.html"],
-  ["/admin/orders.js", "admin-orders.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/script.js", "script.js"],
   ["/style.css", "style.css"],
@@ -168,7 +165,7 @@ function loginPage(error = "", title = "Produktionsrechner", redirectPath = "/pr
     cancelled: "Die Discord-Anmeldung wurde abgebrochen."
   };
   const message = messages[error] || "";
-  const adminPath = redirectPath === "/admin/catalog" || redirectPath === "/admin/orders" ? redirectPath : "/admin/orders";
+  const adminPath = redirectPath === "/admin/catalog" ? redirectPath : "/admin/catalog";
   const authHref = title === "Admin Panel" ? `/auth/discord?next=${encodeURIComponent(adminPath)}` : "/auth/discord";
   return `<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung</title>
@@ -306,8 +303,8 @@ async function beginLogin(req, res, config) {
   if (!configIsReady(config)) {
     const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const requestedDestination = loginUrl.searchParams.get("next");
-    const isAdmin = requestedDestination === "/admin/catalog" || requestedDestination === "/admin/orders";
-    send(res, 503, loginPage("setup", isAdmin ? "Admin Panel" : "Produktionsrechner", requestedDestination || "/admin/orders"), "text/html; charset=utf-8");
+    const isAdmin = requestedDestination === "/admin/catalog";
+    send(res, 503, loginPage("setup", isAdmin ? "Admin Panel" : "Produktionsrechner", requestedDestination || "/admin/catalog"), "text/html; charset=utf-8");
     return;
   }
   pruneState();
@@ -316,7 +313,7 @@ async function beginLogin(req, res, config) {
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const requestedDestination = loginUrl.searchParams.get("next");
-  const redirectPath = requestedDestination === "/admin/catalog" || requestedDestination === "/admin/orders" ? requestedDestination : "";
+  const redirectPath = requestedDestination === "/admin/catalog" ? requestedDestination : "";
   pendingLogins.set(state, { verifier, redirectPath, expiresAt: Date.now() + 10 * 60 * 1000 });
   appendCookie(res, makeCookie("olymp_oauth_state", state, 600));
   const query = new URLSearchParams({
@@ -508,7 +505,7 @@ async function requireCatalogAdmin(req, res, config) {
   }
   if (!session) {
     if (String(req.headers.accept || "").includes("text/html")) {
-      redirect(res, "/login?admin=1&next=/admin/orders");
+      redirect(res, "/login?admin=1&next=/admin/catalog");
     } else {
       send(res, 401, JSON.stringify({ ok: false, message: "Bitte melde dich mit deinem Discord-Admin-Konto an." }), "application/json; charset=utf-8");
     }
@@ -563,62 +560,6 @@ function validateShopProducts(value) {
     });
   }
   return { products };
-}
-
-const ORDER_STATUS_OPTIONS = ["Neu", "In Bearbeitung", "Bestätigt", "In Produktion", "Versendet", "Abgeschlossen", "Abgelehnt"];
-
-function normalizeOrderStatus(value) {
-  const status = String(value || "").trim();
-  return ORDER_STATUS_OPTIONS.includes(status) ? status : "Neu";
-}
-
-function readAdminOrders() {
-  if (!fs.existsSync(ADMIN_ORDERS_FILE)) {
-    fs.writeFileSync(ADMIN_ORDERS_FILE, "[]", "utf8");
-    return [];
-  }
-  const raw = JSON.parse(fs.readFileSync(ADMIN_ORDERS_FILE, "utf8"));
-  if (!Array.isArray(raw)) throw new Error("Admin order data must be a JSON array.");
-  return raw.map(order => ({
-    ...order,
-    id: String(order.id || crypto.randomUUID()),
-    status: normalizeOrderStatus(order.status),
-    createdAt: order.createdAt || new Date().toISOString(),
-    updatedAt: order.updatedAt || order.createdAt || new Date().toISOString(),
-    customerName: String(order.customerName || "Unbekannt").trim(),
-    source: String(order.source || "custom").trim(),
-    total: Number(order.total || 0)
-  }));
-}
-
-function saveAdminOrders(orders) {
-  const temporaryFile = `${ADMIN_ORDERS_FILE}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(temporaryFile, JSON.stringify(orders, null, 2), { encoding: "utf8", flag: "wx" });
-  fs.renameSync(temporaryFile, ADMIN_ORDERS_FILE);
-}
-
-function recordAdminOrder(source, order) {
-  const orders = readAdminOrders();
-  const record = {
-    id: String(order.id || crypto.randomUUID()),
-    source: String(source || "custom"),
-    customerName: String(order.customerName || order.icName || "Unbekannt").trim() || "Unbekannt",
-    phone: String(order.phone || "").trim(),
-    total: Number(order.totalPrice ?? order.total ?? 0),
-    status: normalizeOrderStatus(order.status),
-    createdAt: order.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    items: Array.isArray(order.items) ? order.items.map(item => ({
-      name: String(item.name || "").trim(),
-      quantity: Number(item.quantity || 0),
-      pricePerItem: Number(item.pricePerItem || 0),
-      totalPrice: Number(item.totalPrice || 0)
-    })) : [],
-    raw: { ...order }
-  };
-  orders.unshift(record);
-  saveAdminOrders(orders);
-  return record;
 }
 
 function describeCatalogChanges(previous, updated) {
@@ -999,7 +940,6 @@ async function handleMaterialOrder(req, res) {
       `Gesamtpreis: ${totalPrice} $\n` +
       `Zeitstempel: ${new Date().toLocaleString("de-DE")}`
   };
-  recordAdminOrder("material", order);
   const discordPayload = buildMaterialOrderPayload(order);
 
   try {
@@ -1082,8 +1022,6 @@ async function handleStankOrder(req, res) {
       `STANK-Pflanzen: ${quantity}\n` +
       `Gesamtpreis: ${totalPrice.toLocaleString("de-DE")} $`
   };
-  recordAdminOrder("stank", order);
-
   try {
     const result = await postToDiscordChannel(
       buildStankOrderPayload(order),
@@ -1205,8 +1143,6 @@ async function handleCustomOrder(req, res) {
       items.map((item, index) => `${index + 1}. ${item.name}${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
       `\nGesamtsumme: ${totalPrice} $`
   };
-  recordAdminOrder("custom", order);
-
   try {
     const result = await postToDiscordChannel(
       buildCustomOrderPayload(order),
@@ -1277,51 +1213,6 @@ async function handleRequest(req, res) {
     } catch (error) {
       console.error("Shop-Katalog konnte nicht gelesen werden:", error.message);
       send(res, 500, JSON.stringify({ ok: false, message: "Der Produktkatalog ist momentan nicht verfügbar." }), "application/json; charset=utf-8");
-    }
-    return;
-  }
-  if ((req.method === "GET" || req.method === "PUT") && pathname === "/api/admin/orders") {
-    const adminSession = await requireCatalogAdmin(req, res, config);
-    if (!adminSession) return;
-    if (req.method === "GET") {
-      try {
-        send(res, 200, JSON.stringify({ ok: true, orders: readAdminOrders() }), "application/json; charset=utf-8");
-      } catch (error) {
-        console.error("Bestellungen konnten nicht gelesen werden:", error.message);
-        send(res, 500, JSON.stringify({ ok: false, message: "Bestellungen konnten nicht gelesen werden." }), "application/json; charset=utf-8");
-      }
-      return;
-    }
-
-    let payload;
-    try {
-      payload = JSON.parse(await readRequestBody(req, 128 * 1024));
-    } catch (error) {
-      send(res, 400, JSON.stringify({ ok: false, message: "Ungültige oder zu große Bestelldaten." }), "application/json; charset=utf-8");
-      return;
-    }
-
-    const id = String(payload?.id || "").trim();
-    const nextStatus = normalizeOrderStatus(payload?.status);
-    if (!id || !nextStatus) {
-      send(res, 400, JSON.stringify({ ok: false, message: "Bestell-ID und Status sind erforderlich." }), "application/json; charset=utf-8");
-      return;
-    }
-
-    try {
-      const orders = readAdminOrders();
-      const index = orders.findIndex(order => String(order.id) === id);
-      if (index === -1) {
-        send(res, 404, JSON.stringify({ ok: false, message: "Bestellung nicht gefunden." }), "application/json; charset=utf-8");
-        return;
-      }
-      orders[index].status = nextStatus;
-      orders[index].updatedAt = new Date().toISOString();
-      saveAdminOrders(orders);
-      send(res, 200, JSON.stringify({ ok: true, order: orders[index] }), "application/json; charset=utf-8");
-    } catch (error) {
-      console.error("Bestellstatus konnte nicht aktualisiert werden:", error.message);
-      send(res, 500, JSON.stringify({ ok: false, message: "Bestellstatus konnte nicht aktualisiert werden." }), "application/json; charset=utf-8");
     }
     return;
   }
@@ -1425,7 +1316,7 @@ async function handleRequest(req, res) {
     redirect(res, "/login");
     return;
   }
-  if (pathname === "/admin/catalog" || pathname === "/admin/catalog.js" || pathname === "/admin/orders" || pathname === "/admin/orders.js") {
+  if (pathname === "/admin/catalog" || pathname === "/admin/catalog.js") {
     const adminSession = await requireCatalogAdmin(req, res, config);
     if (!adminSession) return;
     serveStatic(req, res, pathname);
