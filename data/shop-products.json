@@ -61,5 +61,14 @@
     "category": "Verbrauchsgegenstände",
     "available": true,
     "active": true
+  },
+  {
+    "id": "88888888-8888-4888-8888-888888888888",
+    "name": "Kabelbinder x16",
+    "price": 30000,
+    "image": "/img/kabelbinder.png",
+    "category": "Verbrauchsgegenstände",
+    "available": true,
+    "active": true
   }
 ]
