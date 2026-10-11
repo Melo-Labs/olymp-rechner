@@ -22,7 +22,7 @@
   {
     "id": "luftfilter-3",
     "name": "Luftfilter III",
-    "price": 815
+    "price": 1115
   },
   {
     "id": "dietrich",
@@ -93,5 +93,10 @@
     "id": "schneidbrenner",
     "name": "Schneidbrenner",
     "price": 5000
+  },
+  {
+    "id": "kokablaetter",
+    "name": "Kokablätter",
+    "price": 450
   }
 ]

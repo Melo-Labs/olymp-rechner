@@ -62,16 +62,19 @@ function renderProducts() {
 
     main.append(checkbox, name, price);
 
-    const quantityField = document.createElement("div");
-    quantityField.className = "quantity-field";
+    const quantityControl = document.createElement("div");
+    quantityControl.className = "quantity-control";
 
-    const quantityLabel = document.createElement("label");
-    quantityLabel.htmlFor = `quantity-${product.id}`;
-    quantityLabel.textContent = "Stückzahl";
+    const decreaseButton = document.createElement("button");
+    decreaseButton.type = "button";
+    decreaseButton.className = "quantity-step";
+    decreaseButton.dataset.step = "-1";
+    decreaseButton.textContent = "−";
+    decreaseButton.setAttribute("aria-label", `${product.name} Stückzahl verringern`);
 
     const quantityInput = document.createElement("input");
     quantityInput.className = "quantity-input";
-    quantityInput.id = quantityLabel.htmlFor;
+    quantityInput.id = `quantity-${product.id}`;
     quantityInput.type = "number";
     quantityInput.min = "1";
     quantityInput.max = "10000";
@@ -80,8 +83,15 @@ function renderProducts() {
     quantityInput.disabled = true;
     quantityInput.setAttribute("aria-label", `Stückzahl ${product.name}`);
 
-    quantityField.append(quantityLabel, quantityInput);
-    item.append(main, quantityField);
+    const increaseButton = document.createElement("button");
+    increaseButton.type = "button";
+    increaseButton.className = "quantity-step";
+    increaseButton.dataset.step = "1";
+    increaseButton.textContent = "+";
+    increaseButton.setAttribute("aria-label", `${product.name} Stückzahl erhöhen`);
+
+    quantityControl.append(decreaseButton, quantityInput, increaseButton);
+    item.append(main, quantityControl);
     fragment.append(item);
   }
   productsContainer.replaceChildren(fragment);
@@ -97,6 +107,27 @@ productsContainer.addEventListener("change", event => {
     item.classList.toggle("selected", event.target.checked);
   }
   updateSummary();
+});
+
+productsContainer.addEventListener("click", event => {
+  const button = event.target.closest(".quantity-step");
+  if (button) {
+    const item = button.closest(".price-item");
+    const quantityInput = item.querySelector(".quantity-input");
+    const step = Number(button.dataset.step);
+    const current = Number(quantityInput.value);
+    quantityInput.value = String(Math.max(1, Math.min(10000, (Number.isSafeInteger(current) ? current : 1) + step)));
+    updateSummary();
+    return;
+  }
+
+  const item = event.target.closest(".price-item");
+  if (!item || event.target.closest("input, label")) return;
+  const checkbox = item.querySelector(".product-select");
+  if (!checkbox.checked) {
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+  }
 });
 
 productsContainer.addEventListener("input", event => {

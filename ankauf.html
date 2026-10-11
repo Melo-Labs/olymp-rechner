@@ -20,15 +20,18 @@
     .card{position:relative;margin-top:28px;max-width:760px;padding:28px 26px 24px;border:1px solid rgba(215,173,114,.18);border-radius:6px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 30px 50px -34px rgba(0,0,0,.9);background:linear-gradient(var(--br),var(--br)) 0 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/1px 14px no-repeat,linear-gradient(165deg,rgba(27,29,33,.82),rgba(11,12,14,.9))}
     .card h2{margin:0 0 16px;font:700 1.25rem/1.2 var(--display);letter-spacing:.05em}
     .price-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
-    .price-item{display:grid;gap:12px;padding:12px 14px;border:1px solid rgba(215,173,114,.12);border-radius:6px;background:rgba(0,0,0,.2);transition:border-color .2s,background .2s}
+    .price-item{display:grid;gap:12px;padding:12px 14px;border:1px solid rgba(215,173,114,.12);border-radius:6px;background:rgba(0,0,0,.2);cursor:pointer;transition:border-color .2s,background .2s}
     .price-item.selected{border-color:rgba(215,173,114,.65);background:rgba(215,173,114,.08)}
     .item-main{display:flex;align-items:center;gap:10px}
     .item-main input[type=checkbox]{flex:none;width:20px;height:20px;margin:0;padding:0;accent-color:var(--a);cursor:pointer}
     .item-name{flex:1;font-weight:600;line-height:1.35;cursor:pointer}
     .item-price{flex:none;color:var(--a);font-weight:700;white-space:nowrap}
-    .quantity-field{display:flex;align-items:center;gap:10px}
-    .quantity-field label{flex:1;color:var(--muted);font-size:.9rem}
-    input.quantity-input{width:110px;padding:8px 10px;text-align:center}
+    .quantity-control{display:none;grid-template-columns:48px minmax(0,1fr) 48px;gap:8px}
+    .price-item.selected .quantity-control{display:grid}
+    .quantity-control button{border:1px solid rgba(228,232,238,.24);border-radius:6px;background:rgba(228,232,238,.08);color:var(--text);font:700 1.4rem/1 var(--display);cursor:pointer;transition:background .2s,border-color .2s}
+    .quantity-control button:hover{border-color:var(--a);background:rgba(215,173,114,.16)}
+    .quantity-control button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+    input.quantity-input{min-width:0;padding:8px 10px;text-align:center}
     .price-note,.loading-products{margin:16px 0 0;color:var(--muted);font-size:.9rem;line-height:1.5}
     form{display:grid;gap:18px;margin-top:8px}
     .field{display:grid;gap:8px}
