@@ -1,0 +1,53 @@
+name: Discord GitHub Updates
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  discord-notification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord Notification
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "Discord Webhook fehlt!"
+            exit 1
+          fi
+
+          MESSAGE=$(cat <<EOF
+          {
+            "embeds": [
+              {
+                "title": "🚀 Neues GitHub-Update!",
+                "description": "Ein neuer Push wurde im Repository **${GITHUB_REPOSITORY}** durchgeführt.",
+                "color": 5793266,
+                "fields": [
+                  {
+                    "name": "Branch",
+                    "value": "${GITHUB_REF_NAME}",
+                    "inline": true
+                  },
+                  {
+                    "name": "Commit",
+                    "value": "${GITHUB_SHA::7}",
+                    "inline": true
+                  },
+                  {
+                    "name": "Änderungen",
+                    "value": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+                  }
+                ],
+                "url": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -fsS -H "Content-Type: application/json" \
+            -d "$MESSAGE" \
+            "$DISCORD_WEBHOOK"
