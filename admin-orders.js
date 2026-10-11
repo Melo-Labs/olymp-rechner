@@ -35,17 +35,40 @@ function formatDate(value) {
   }).format(date);
 }
 
-function formatOrderLine(order) {
+function createOrderSummary(order) {
+  const summary = document.createElement('div');
+  summary.className = 'order-items';
+
   if (!Array.isArray(order.items) || !order.items.length) {
     if (order.source === 'material') {
-      return `Technik ${order.raw?.technical ?? 0} / Medizin ${order.raw?.medical ?? 0}`;
+      summary.textContent = `Technik ${order.raw?.technical ?? 0} / Medizin ${order.raw?.medical ?? 0}`;
+      return summary;
     }
     if (order.source === 'stank') {
-      return `${order.raw?.quantity ?? 0} STANK`; 
+      summary.textContent = `${order.raw?.quantity ?? 0} STANK`;
+      return summary;
     }
-    return '—';
+    summary.textContent = '—';
+    return summary;
   }
-  return order.items.slice(0, 2).map(item => `${item.name || 'Position'} (${item.quantity || 0})`).join(', ') + (order.items.length > 2 ? ' …' : '');
+
+  order.items.forEach(item => {
+    const line = document.createElement('div');
+    line.className = 'order-item';
+
+    const name = document.createElement('strong');
+    name.textContent = item.name || 'Position';
+
+    const quantity = Number(item.quantity) || 0;
+    const price = Number(item.pricePerItem) || 0;
+    const itemTotal = Number(item.totalPrice) || quantity * price;
+    const details = document.createElement('span');
+    details.textContent = `${quantity} Stk. × ${price.toLocaleString('de-DE')} $ = ${itemTotal.toLocaleString('de-DE')} $`;
+
+    line.append(name, details);
+    summary.append(line);
+  });
+  return summary;
 }
 
 function renderOrders(orders) {
@@ -99,12 +122,13 @@ function renderOrders(orders) {
         <div class="muted">${order.phone || 'Keine Telefonnummer'}</div>
       </td>
       <td>${order.source || 'custom'}</td>
-      <td>${formatOrderLine(order)}</td>
+      <td></td>
       <td>${total.toLocaleString('de-DE')} $</td>
       <td></td>
       <td>${formatDate(order.updatedAt || order.createdAt)}</td>
     `;
 
+    row.children[3].append(createOrderSummary(order));
     const statusCell = row.children[5];
     statusCell.append(badge, document.createElement('br'));
     statusCell.append(select);
