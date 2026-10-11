@@ -52,5 +52,14 @@
     "category": "Waffen",
     "available": true,
     "active": true
+  },
+  {
+    "id": "77777777-7777-4777-8777-777777777777",
+    "name": "Medkit",
+    "price": 2200,
+    "image": "/img/medkit.png",
+    "category": "Verbrauchsgegenstände",
+    "available": true,
+    "active": true
   }
 ]
