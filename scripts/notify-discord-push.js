@@ -23,7 +23,8 @@ const repoName = (repoRoot.split(/[\\/]/).filter(Boolean).pop() || "repo").repla
 const branch = run("git rev-parse --abbrev-ref HEAD") || "unknown";
 const remoteUrl = run("git config --get remote.origin.url") || "local";
 const pusher = run("git config user.name") || process.env.USER || "unknown";
-const recentCommits = run("git log --format=%h %s -n 5") || "Keine Commits";
+const currentSha = run("git rev-parse --short HEAD") || "unknown";
+const recentCommits = run("git log --format=%h%x09%an%x09%s -n 5") || "";
 const incomingRefs = (fs.readFileSync(0, "utf8") || "").trim();
 
 const refsSummary = incomingRefs
@@ -31,34 +32,68 @@ const refsSummary = incomingRefs
       .filter(Boolean)
       .slice(0, 3)
       .map((line) => {
-        const [localRef, localSha, remoteRef, remoteSha] = line.trim().split(/\s+/);
-        const remoteTarget = (remoteRef || localRef || "ref").replace(/^refs\/heads\//, "");
-        return `${remoteTarget} (${remoteSha ? remoteSha.slice(0, 7) : "head"})`;
+        const parts = line.trim().split(/\s+/);
+        const localRef = parts[0] || "ref";
+        const remoteRef = parts[2] || localRef;
+        const remoteSha = parts[3] || "";
+        const target = (remoteRef || localRef || "ref").replace(/^refs\/heads\//, "");
+        return `• ${target} (${remoteSha ? remoteSha.slice(0, 7) : "head"})`;
       })
       .join("\n")
-  : "No ref data";
+  : "Keine Ref-Informationen";
+
+const commitLines = recentCommits
+  ? recentCommits
+      .split(/\n/)
+      .filter(Boolean)
+      .slice(0, 5)
+      .map((line) => {
+        const [sha, author, ...messageParts] = line.split(/\t/);
+        const message = messageParts.join(" ") || "Kein Commit-Text";
+        return `• ${sha} — ${author}: ${message}`;
+      })
+      .join("\n")
+  : "Keine Commits";
 
 const payload = {
   username: "Git Push Notifier",
-  avatar_url: "https://cdn.discordapp.com/embed/avatars/0.png",
-  content: `🚀 Push in ${repoName}`,
+  avatar_url: "https://cdn.discordapp.com/embed/avatars/1.png",
+  content: `🚀 Neuer Push in **${repoName}**`,
   embeds: [
     {
-      title: `Push auf ${branch}`,
-      color: 0x5865f2,
-      description: `Repository: **${repoName}**\nPusher: **${pusher}**\nRemote: ${remoteUrl}`,
+      title: `✅ Push auf ${branch}`,
+      color: 0x57f287,
+      description: `Ein neuer Commit wurde von **${pusher}** an **${repoName}** gepusht.`,
       fields: [
         {
+          name: "Repository",
+          value: `**${repoName}**`,
+          inline: true,
+        },
+        {
+          name: "Branch",
+          value: `\`${branch}\``,
+          inline: true,
+        },
+        {
+          name: "Letzter Commit",
+          value: `\`${currentSha}\``,
+          inline: true,
+        },
+        {
           name: "Refs",
-          value: refsSummary || "Keine Ref-Infos",
+          value: refsSummary,
           inline: false,
         },
         {
           name: "Letzte Commits",
-          value: recentCommits.split("\n").slice(0, 5).join("\n") || "Keine Commits",
+          value: commitLines,
           inline: false,
         },
       ],
+      footer: {
+        text: `${repoName} • ${new Date().toLocaleString("de-DE")}`,
+      },
       timestamp: new Date().toISOString(),
     },
   ],
