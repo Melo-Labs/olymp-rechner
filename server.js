@@ -35,6 +35,7 @@ const CATALOG_AUDIT_CHANNEL_ID = "1558539114662330419";
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
 const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
+const BUYBACK_PRODUCTS_FILE = path.join(ROOT, "data", "buyback-products.json");
 
 function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
   const configured = process.env[envKey]?.trim();
@@ -982,6 +983,25 @@ async function handleMaterialOrder(req, res) {
   }
 }
 
+function readBuybackProducts() {
+  const products = JSON.parse(fs.readFileSync(BUYBACK_PRODUCTS_FILE, "utf8"));
+  if (!Array.isArray(products) || products.length < 1 || products.length > 100) {
+    throw new Error("Buyback product catalog must contain between 1 and 100 products.");
+  }
+
+  const ids = new Set();
+  for (const product of products) {
+    if (!product || typeof product.id !== "string" || !/^[a-z0-9-]{1,80}$/.test(product.id)
+      || typeof product.name !== "string" || !product.name.trim() || product.name.length > 80
+      || !Number.isSafeInteger(product.price) || product.price < 1 || product.price > 1000000000
+      || ids.has(product.id)) {
+      throw new Error("Buyback product catalog contains invalid product data.");
+    }
+    ids.add(product.id);
+  }
+  return products;
+}
+
 async function handleSellOffer(req, res) {
   let payload;
   try {
@@ -995,19 +1015,54 @@ async function handleSellOffer(req, res) {
     return;
   }
 
-  const offer = String(payload?.offer || "").trim();
   const icName = String(payload?.icName || "").trim();
   const phone = String(payload?.phone || "").trim();
-  if (!offer || offer.length > 2000 || !icName || icName.length > 80 || !phone || phone.length > 40) {
-    send(res, 400, JSON.stringify({ ok: false, message: "Bitte Angebot, IC-Name und Telefonnummer korrekt ausfüllen." }), "application/json; charset=utf-8");
+  if (!icName || icName.length > 80 || !phone || phone.length > 40
+    || !Array.isArray(payload?.items) || payload.items.length < 1 || payload.items.length > 100) {
+    send(res, 400, JSON.stringify({ ok: false, message: "Bitte mindestens einen Gegenstand auswählen und deine Kontaktdaten korrekt ausfüllen." }), "application/json; charset=utf-8");
     return;
   }
 
+  let products;
+  try {
+    products = readBuybackProducts();
+  } catch (error) {
+    console.error("Ankauf-Preisliste konnte nicht gelesen werden:", error.message);
+    send(res, 500, JSON.stringify({ ok: false, message: "Die Ankauf-Preisliste ist momentan nicht verfügbar." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  const productById = new Map(products.map(product => [product.id, product]));
+  const seenProductIds = new Set();
+  const items = [];
+  let totalPrice = 0;
+  for (const entry of payload.items) {
+    const product = productById.get(entry?.productId);
+    const quantity = Number(entry?.quantity);
+    if (!product || seenProductIds.has(product.id)
+      || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10000) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Eine ausgewählte Position oder Stückzahl ist ungültig." }), "application/json; charset=utf-8");
+      return;
+    }
+    const itemTotal = product.price * quantity;
+    if (!Number.isSafeInteger(itemTotal) || !Number.isSafeInteger(totalPrice + itemTotal)) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Der Gesamtpreis ist zu hoch." }), "application/json; charset=utf-8");
+      return;
+    }
+    seenProductIds.add(product.id);
+    totalPrice += itemTotal;
+    items.push({ productId: product.id, name: product.name, quantity, pricePerItem: product.price, totalPrice: itemTotal });
+  }
+
+  const itemList = items.map(item =>
+    `**${item.name}** — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $ = ${item.totalPrice.toLocaleString("de-DE")} $`
+  ).join("\n");
   const sellOffer = {
     type: "sell-offer",
-    offer,
+    items,
     icName,
     phone,
+    totalPrice,
     status: "Neu",
     createdAt: new Date().toISOString()
   };
@@ -1015,11 +1070,12 @@ async function handleSellOffer(req, res) {
     content: "💰 Neues Ankauf-Angebot",
     embeds: [{
       title: "Neues Ankauf-Angebot",
-      description: offer,
+      description: itemList,
       color: 0xd7ad72,
       fields: [
         { name: "IC-Name", value: icName, inline: true },
-        { name: "Telefonnummer", value: phone, inline: true }
+        { name: "Telefonnummer", value: phone, inline: true },
+        { name: "Gesamtsumme", value: `${totalPrice.toLocaleString("de-DE")} $`, inline: true }
       ],
       footer: { text: "Olymp Rechner • Ankauf" },
       timestamp: sellOffer.createdAt
@@ -1274,6 +1330,15 @@ async function handleRequest(req, res) {
   }
   if (req.method === "POST" && pathname === "/api/ankauf-angebot") {
     await handleSellOffer(req, res);
+    return;
+  }
+  if (req.method === "GET" && pathname === "/api/ankauf-produkte") {
+    try {
+      send(res, 200, JSON.stringify({ ok: true, products: readBuybackProducts() }), "application/json; charset=utf-8");
+    } catch (error) {
+      console.error("Ankauf-Preisliste konnte nicht gelesen werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Die Ankauf-Preisliste ist momentan nicht verfügbar." }), "application/json; charset=utf-8");
+    }
     return;
   }
   if (req.method === "POST" && pathname === "/api/stank-bestellung") {

@@ -19,20 +19,36 @@
     .lead{margin:0;max-width:62ch;color:var(--muted);line-height:1.6;font-size:clamp(1rem,1.5vw,1.15rem)}
     .card{position:relative;margin-top:28px;max-width:760px;padding:28px 26px 24px;border:1px solid rgba(215,173,114,.18);border-radius:6px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 30px 50px -34px rgba(0,0,0,.9);background:linear-gradient(var(--br),var(--br)) 0 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/1px 14px no-repeat,linear-gradient(165deg,rgba(27,29,33,.82),rgba(11,12,14,.9))}
     .card h2{margin:0 0 16px;font:700 1.25rem/1.2 var(--display);letter-spacing:.05em}
+    .price-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
+    .price-item{display:grid;gap:12px;padding:12px 14px;border:1px solid rgba(215,173,114,.12);border-radius:6px;background:rgba(0,0,0,.2);transition:border-color .2s,background .2s}
+    .price-item.selected{border-color:rgba(215,173,114,.65);background:rgba(215,173,114,.08)}
+    .item-main{display:flex;align-items:center;gap:10px}
+    .item-main input[type=checkbox]{flex:none;width:20px;height:20px;margin:0;padding:0;accent-color:var(--a);cursor:pointer}
+    .item-name{flex:1;font-weight:600;line-height:1.35;cursor:pointer}
+    .item-price{flex:none;color:var(--a);font-weight:700;white-space:nowrap}
+    .quantity-field{display:flex;align-items:center;gap:10px}
+    .quantity-field label{flex:1;color:var(--muted);font-size:.9rem}
+    input.quantity-input{width:110px;padding:8px 10px;text-align:center}
+    .price-note,.loading-products{margin:16px 0 0;color:var(--muted);font-size:.9rem;line-height:1.5}
     form{display:grid;gap:18px;margin-top:8px}
     .field{display:grid;gap:8px}
+    .field-label{font-size:1rem;font-weight:600;color:rgba(236,236,236,.92)}
     label{font-size:1rem;font-weight:600;color:rgba(236,236,236,.92)}
-    input,textarea{width:100%;padding:15px 16px;border-radius:6px;border:1px solid rgba(228,232,238,.16);background:rgba(0,0,0,.38);color:var(--text);font:inherit;font-size:1.05rem;transition:border-color .2s,box-shadow .2s}
-    textarea{min-height:150px;resize:vertical;line-height:1.5}
-    input:hover,textarea:hover{border-color:rgba(215,173,114,.55)}
-    input:focus,textarea:focus{outline:none;border-color:var(--a);box-shadow:0 0 0 3px rgba(215,173,114,.14),0 0 24px -6px rgba(215,173,114,.4)}
+    input:not([type=checkbox]){width:100%;padding:15px 16px;border-radius:6px;border:1px solid rgba(228,232,238,.16);background:rgba(0,0,0,.38);color:var(--text);font:inherit;font-size:1.05rem;transition:border-color .2s,box-shadow .2s}
+    input:not([type=checkbox]):hover{border-color:rgba(215,173,114,.55)}
+    input:not([type=checkbox]):focus{outline:none;border-color:var(--a);box-shadow:0 0 0 3px rgba(215,173,114,.14),0 0 24px -6px rgba(215,173,114,.4)}
+    input:not([type=checkbox]):disabled{opacity:.45}
     .hint{margin:0;color:var(--muted);font-size:.9rem;line-height:1.5}
+    .summary{display:grid;gap:10px;padding:16px;border:1px dashed rgba(215,173,114,.3);border-radius:6px;background:rgba(215,173,114,.04)}
+    .summary p{margin:0;color:var(--muted);line-height:1.5}
+    .summary-total{display:flex;justify-content:space-between;gap:12px;padding-top:10px;border-top:1px solid rgba(215,173,114,.16)}
+    .summary-total strong{color:var(--a)}
     .cta{display:inline-flex;align-items:center;justify-content:center;width:100%;padding:15px 18px;border:0;border-radius:6px;background:linear-gradient(135deg,#f3dfc2,#c29a63);color:#0a0a0b;font:700 .95rem var(--display);letter-spacing:.08em;cursor:pointer;transition:box-shadow .25s,transform .2s}
     .cta:hover{transform:translateY(-1px);box-shadow:0 0 30px rgba(215,173,114,.4)}
     .cta:disabled{cursor:wait;opacity:.65;transform:none}
     .status{min-height:24px;font-size:.92rem;color:var(--muted);font-weight:600}
     .status.error{color:var(--red)}.status.success{color:var(--green)}
-    @media (max-width:760px){.card{padding:22px 16px 18px}}
+    @media (max-width:760px){.card{padding:22px 16px 18px}.price-grid{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -43,15 +59,25 @@
     </div>
 
     <h1>Ankauf</h1>
-    <p class="lead">Was möchtest du an uns verkaufen? Beschreibe die Gegenstände und ihre Menge. Wir melden uns bei dir, um die Details und den Preis zu besprechen.</p>
+    <p class="lead">Diese Gegenstände kaufen wir zu den aufgeführten Stückpreisen an. Schreib ins Formular, welche und wie viele Gegenstände du anbieten möchtest. Wir melden uns anschließend bei dir.</p>
+
+    <section class="card" aria-labelledby="price-list-title">
+      <h2 id="price-list-title">Unsere Ankaufspreise</h2>
+      <div id="buyback-products" class="price-grid" aria-label="Ankaufartikel">
+        <p class="loading-products">Ankaufartikel werden geladen …</p>
+      </div>
+      <p class="price-note">Wähle die Gegenstände aus und trage die gewünschte Stückzahl ein. Alle Preise gelten pro Stück.</p>
+    </section>
 
     <section class="card" aria-labelledby="form-title">
       <h2 id="form-title">Dein Angebot</h2>
       <form id="sell-offer-form">
         <div class="field">
-          <label for="offer">Gegenstände und Menge</label>
-          <textarea id="offer" name="offer" maxlength="2000" placeholder="Zum Beispiel: 20x Metall, 5x Werkzeug (Zustand: gebraucht)" required></textarea>
-          <p class="hint">Gib bitte möglichst genau an, was und wie viel du verkaufen möchtest. Ankaufspreise werden später ergänzt.</p>
+          <span class="field-label">Deine Auswahl</span>
+          <div id="offer-summary" class="summary" aria-live="polite">
+            <p id="selected-items">Noch keine Gegenstände ausgewählt.</p>
+            <p class="summary-total"><span>Voraussichtlicher Gesamtpreis</span><strong id="estimated-total">0 $</strong></p>
+          </div>
         </div>
 
         <div class="field">
@@ -64,7 +90,7 @@
           <input id="phone" name="phone" type="tel" maxlength="40" autocomplete="tel" placeholder="Deine Telefonnummer" required>
         </div>
 
-        <button class="cta" type="submit">Ankauf-Angebot senden</button>
+        <button class="cta" type="submit" disabled>Ankauf-Angebot senden</button>
         <div id="status" class="status" aria-live="polite"></div>
       </form>
     </section>

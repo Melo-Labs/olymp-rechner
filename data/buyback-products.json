@@ -1,0 +1,97 @@
+[
+  {
+    "id": "dunger-1",
+    "name": "Dünger I",
+    "price": 128
+  },
+  {
+    "id": "benzinkanister",
+    "name": "Benzinkanister",
+    "price": 146
+  },
+  {
+    "id": "luftfilter-1",
+    "name": "Luftfilter I",
+    "price": 800
+  },
+  {
+    "id": "luftfilter-2",
+    "name": "Luftfilter II",
+    "price": 1115
+  },
+  {
+    "id": "luftfilter-3",
+    "name": "Luftfilter III",
+    "price": 815
+  },
+  {
+    "id": "dietrich",
+    "name": "Dietrich",
+    "price": 272
+  },
+  {
+    "id": "chipsatz",
+    "name": "Chipsatz",
+    "price": 870
+  },
+  {
+    "id": "stoff",
+    "name": "Stoff",
+    "price": 625
+  },
+  {
+    "id": "aceton",
+    "name": "Aceton",
+    "price": 695
+  },
+  {
+    "id": "wasserstoffperoxid",
+    "name": "Wasserstoffperoxid",
+    "price": 590
+  },
+  {
+    "id": "natriumbenzoat",
+    "name": "Natriumbenzoat",
+    "price": 695
+  },
+  {
+    "id": "propylenglykol",
+    "name": "Propylenglykol",
+    "price": 450
+  },
+  {
+    "id": "toluol",
+    "name": "Toluol",
+    "price": 923
+  },
+  {
+    "id": "phosphorsaeure",
+    "name": "Phosphorsäure",
+    "price": 730
+  },
+  {
+    "id": "wismutsaeure",
+    "name": "Wismutsäure",
+    "price": 783
+  },
+  {
+    "id": "roter-phosphor",
+    "name": "Roter Phosphor",
+    "price": 555
+  },
+  {
+    "id": "drehpapier",
+    "name": "Drehpapier",
+    "price": 163
+  },
+  {
+    "id": "schachtel-pseudoephedrin",
+    "name": "Schachtel Pseudoephedrin",
+    "price": 1080
+  },
+  {
+    "id": "schneidbrenner",
+    "name": "Schneidbrenner",
+    "price": 5000
+  }
+]
