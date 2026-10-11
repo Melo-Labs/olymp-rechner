@@ -19,6 +19,18 @@ Der Shop unter `/freie-bestellung.html` kombiniert feste Produkte mit frei ergä
 
 Der Login verwendet den OAuth2-Scope `identify`. Die Rollenprüfung erfolgt über den Discord-Bot, der Servermitgliedschaften lesen können muss. Die Rolle wird bei der Anmeldung und danach mindestens einmal pro Minute geprüft. Sitzungen laufen nach acht Stunden ab und werden beim Serverneustart beendet.
 
+## Git-Push-Benachrichtigung per Discord-Webhook
+
+Für jede erfolgreiche `git push`-Operation wird eine Discord-Nachricht an einen Webhook gesendet. Dafür wird ein Git-Hook unter `.githooks/post-push` verwendet.
+
+1. In der Datei `.env` die Variable `DISCORD_PUSH_WEBHOOK_URL` mit dem Discord-Webhook-Link eintragen.
+2. Hook aktivieren:
+   `git config core.hooksPath .githooks`
+3. Datei ausführbar machen:
+   `chmod +x .githooks/post-push scripts/notify-discord-push.js`
+
+Nach dem nächsten `git push` erscheint im Discord-Channel eine Nachricht mit Repository, Zweig, Remote und den letzten Commits.
+
 ## Hosting
 
 Für öffentliches Hosting die Redirect URI im Developer Portal und in `.env` auf dieselbe HTTPS-Adresse setzen. `HOST` auf `0.0.0.0` setzen, damit der Hosting-Anbieter den Prozess erreichen kann, und `SESSION_COOKIE_SECURE=true` aktivieren. Das Client-Secret und `DISCORD_BOT_TOKEN` ausschließlich als geschützte Umgebungsvariablen des Hostings hinterlegen.
