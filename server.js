@@ -4,7 +4,6 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const Database = require("better-sqlite3");
 const { verifyKey } = require("discord-interactions");
 
 function loadEnvFile() {
@@ -54,39 +53,6 @@ function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
 const CATALOG_FILE = resolvePersistentDataFile("CATALOG_FILE", "data/shop-products.json", LEGACY_CATALOG_FILE);
 const CATALOG_AUDIT_PENDING_FILE = resolvePersistentDataFile("CATALOG_AUDIT_PENDING_FILE", "data/shop-audit-pending.json", LEGACY_CATALOG_AUDIT_PENDING_FILE);
 const ADMIN_ORDERS_FILE = resolvePersistentDataFile("ADMIN_ORDERS_FILE", "data/admin-orders.json", null);
-const CATALOG_DB_FILE = process.env.CATALOG_DB_FILE
-  ? (path.isAbsolute(process.env.CATALOG_DB_FILE) ? process.env.CATALOG_DB_FILE : path.resolve(ROOT, process.env.CATALOG_DB_FILE))
-  : path.join(ROOT, "data", "shop-products.db");
-fs.mkdirSync(path.dirname(CATALOG_DB_FILE), { recursive: true });
-const catalogDb = new Database(CATALOG_DB_FILE);
-catalogDb.pragma("journal_mode = WAL");
-catalogDb.exec(`
-  CREATE TABLE IF NOT EXISTS catalog_products (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL,
-    price INTEGER NOT NULL,
-    image TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT 'Allgemein',
-    stock INTEGER NOT NULL DEFAULT 0,
-    available INTEGER NOT NULL DEFAULT 1,
-    active INTEGER NOT NULL DEFAULT 1
-  );
-`);
-function ensureCatalogProductColumns() {
-  const columns = catalogDb.prepare("PRAGMA table_info(catalog_products)").all();
-  const existing = new Set(columns.map(column => column.name));
-  const additions = [
-    ["category", "TEXT NOT NULL DEFAULT 'Allgemein'"],
-    ["stock", "INTEGER NOT NULL DEFAULT 0"],
-    ["available", "INTEGER NOT NULL DEFAULT 1"]
-  ];
-  for (const [name, definition] of additions) {
-    if (existing.has(name)) continue;
-    catalogDb.exec(`ALTER TABLE catalog_products ADD COLUMN ${name} ${definition};`);
-  }
-}
-ensureCatalogProductColumns();
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
@@ -529,82 +495,17 @@ function normalizeShopProduct(product, fallbackId = crypto.randomUUID()) {
   };
 }
 
-function migrateLegacyCatalogToDatabase() {
-  const count = catalogDb.prepare("SELECT COUNT(*) AS count FROM catalog_products").get().count;
-  if (count > 0) return;
-  const legacyInventoryPath = CATALOG_FILE;
-  if (!fs.existsSync(legacyInventoryPath)) return;
-  let legacyProducts;
-  try {
-    legacyProducts = JSON.parse(fs.readFileSync(legacyInventoryPath, "utf8"));
-  } catch (error) {
-    console.warn("Legacy catalog could not be parsed, skipping migration:", error.message);
-    return;
-  }
-  if (!Array.isArray(legacyProducts)) return;
-  const insert = catalogDb.prepare(`
-    INSERT INTO catalog_products (id, name, price, image, category, available, active)
-    VALUES (@id, @name, @price, @image, @category, @available, @active)
-  `);
-  const saveTx = catalogDb.transaction((products) => {
-    for (const product of products) {
-      insert.run({
-        id: String(product.id || crypto.randomUUID()),
-        name: String(product.name || ""),
-        price: Number(product.price),
-        image: String(product.image || ""),
-        category: String(product.category || "Allgemein"),
-        available: product.available ? 1 : 0,
-        active: product.active ? 1 : 0
-      });
-    }
-  });
-  saveTx(legacyProducts);
-}
-
 function readShopProducts() {
-  const rows = catalogDb.prepare("SELECT id, name, price, image, category, available, active FROM catalog_products ORDER BY rowid ASC").all();
-  return rows.map((row) => normalizeShopProduct({
-    id: row.id,
-    name: row.name,
-    price: row.price,
-    image: row.image,
-    category: row.category,
-    available: Boolean(row.available),
-    active: Boolean(row.active)
-  }, row.id));
+  const products = JSON.parse(fs.readFileSync(CATALOG_FILE, "utf8"));
+  if (!Array.isArray(products)) throw new Error("Shop product catalog must be a JSON array.");
+  return products.map((product, index) => normalizeShopProduct(product, `${index}-${crypto.randomUUID()}`));
 }
 
 function saveShopProducts(products) {
-  const upsert = catalogDb.prepare(`
-    INSERT INTO catalog_products (id, name, price, image, category, available, active)
-    VALUES (@id, @name, @price, @image, @category, @available, @active)
-    ON CONFLICT(id) DO UPDATE SET
-      name = excluded.name,
-      price = excluded.price,
-      image = excluded.image,
-      category = excluded.category,
-      available = excluded.available,
-      active = excluded.active
-  `);
-  const transaction = catalogDb.transaction((entries) => {
-    catalogDb.exec("DELETE FROM catalog_products");
-    for (const product of entries) {
-      upsert.run({
-        id: String(product.id || crypto.randomUUID()),
-        name: String(product.name || ""),
-        price: Number(product.price),
-        image: String(product.image || ""),
-        category: String(product.category || "Allgemein"),
-        available: product.available ? 1 : 0,
-        active: product.active ? 1 : 0
-      });
-    }
-  });
-  transaction(products);
+  const temporaryFile = `${CATALOG_FILE}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryFile, JSON.stringify(products, null, 2), { encoding: "utf8", flag: "wx" });
+  fs.renameSync(temporaryFile, CATALOG_FILE);
 }
-
-migrateLegacyCatalogToDatabase();
 
 async function requireCatalogAdmin(req, res, config) {
   const deny = (status, message) => {

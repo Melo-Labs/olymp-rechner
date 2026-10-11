@@ -9,7 +9,6 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
     "discord-interactions": "^4.4.0"
   }
 }
