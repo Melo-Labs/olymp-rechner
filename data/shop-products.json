@@ -16,5 +16,41 @@
     "category": "Verbrauchsgegenstände",
     "available": true,
     "active": true
+  },
+  {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "name": "Repkit",
+    "price": 1700,
+    "image": "/img/repkit.png",
+    "category": "Verbrauchsgegenstände",
+    "available": true,
+    "active": true
+  },
+  {
+    "id": "44444444-4444-4444-8444-444444444444",
+    "name": "7.62 Muni (240 Schuß)",
+    "price": 2000,
+    "image": "/img/762.png",
+    "category": "Munition",
+    "available": true,
+    "active": true
+  },
+  {
+    "id": "55555555-5555-4555-8555-555555555555",
+    "name": "ACP Muni (150 Schuß)",
+    "price": 2200,
+    "image": "/img/acp.png",
+    "category": "Munition",
+    "available": true,
+    "active": true
+  },
+  {
+    "id": "66666666-6666-4666-8666-666666666666",
+    "name": "Karabiner",
+    "price": 42500,
+    "image": "/img/carabiner.png",
+    "category": "Waffen",
+    "available": true,
+    "active": true
   }
 ]
