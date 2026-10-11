@@ -36,6 +36,10 @@ const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
 const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
 const BUYBACK_PRODUCTS_FILE = path.join(ROOT, "data", "buyback-products.json");
+const SHOP_CONTENT = {
+  weeklyOffers: [],
+  ads: []
+};
 
 function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
   const configured = process.env[envKey]?.trim();
@@ -466,6 +470,15 @@ function normalizeShopProduct(product, fallbackId = crypto.randomUUID()) {
     category,
     available: Boolean(available) && active,
     active
+  };
+}
+
+function getShopPromotion(product) {
+  const promotion = SHOP_CONTENT.weeklyOffers.find(entry => entry.productId === product.id);
+  if (!promotion || !Number.isSafeInteger(promotion.price) || promotion.price < 1 || promotion.price >= product.price) return null;
+  return {
+    price: promotion.price,
+    label: String(promotion.label || "Wochenangebot")
   };
 }
 
@@ -1243,7 +1256,7 @@ async function handleCustomOrder(req, res) {
         return;
       }
       name = product.name;
-      pricePerItem = product.price;
+      pricePerItem = getShopPromotion(product)?.price ?? product.price;
     } else {
       name = String(entry?.name || "").trim();
       pricePerItem = Number(entry?.pricePerItem);
@@ -1353,8 +1366,17 @@ async function handleRequest(req, res) {
     try {
       const products = readShopProducts()
         .filter(product => product.active && product.available)
-        .map(({ id, name, description, price, image, category, available }) => ({ id, name, description, price, image, category, available }));
-      send(res, 200, JSON.stringify({ ok: true, products }), "application/json; charset=utf-8");
+        .map(product => ({
+          id: product.id,
+          name: product.name,
+          description: product.description,
+          price: product.price,
+          image: product.image,
+          category: product.category,
+          available: product.available,
+          promotion: getShopPromotion(product)
+        }));
+      send(res, 200, JSON.stringify({ ok: true, products, ads: SHOP_CONTENT.ads }), "application/json; charset=utf-8");
     } catch (error) {
       console.error("Shop-Katalog konnte nicht gelesen werden:", error.message);
       send(res, 500, JSON.stringify({ ok: false, message: "Der Produktkatalog ist momentan nicht verfügbar." }), "application/json; charset=utf-8");
