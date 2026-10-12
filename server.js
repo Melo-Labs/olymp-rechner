@@ -35,6 +35,7 @@ const SELL_OFFER_CHANNEL_ID = process.env.DISCORD_SELL_OFFER_CHANNEL_ID || "1558
 const CATALOG_AUDIT_CHANNEL_ID = "1558539114662330419";
 const WELCOME_CHANNEL_ID = "1558193685860982880";
 const UNVERIFIED_ROLE_ID = "1558193824386261192";
+const ACCOUNTING_CHANNEL_ID = "1559327859351232603";
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
 const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
@@ -53,6 +54,8 @@ const SHOP_CONTENT = {
     }
   ]
 };
+const ACCOUNTING_ORDERS_FILE = path.join(ROOT, "data", "accounting-orders.json");
+const ACCOUNTING_REPORTS_FILE = path.join(ROOT, "data", "accounting-reports.json");
 
 function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
   const configured = process.env[envKey]?.trim();
@@ -484,6 +487,162 @@ function saveOrderLocally(order, fileName) {
 
 function saveMaterialOrderLocally(order) {
   return saveOrderLocally(order, "material-bestellungen.json");
+}
+
+function accountingDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function previousAccountingDate(dateKey) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const previous = new Date(Date.UTC(year, month - 1, day - 1));
+  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}-${String(previous.getUTCDate()).padStart(2, "0")}`;
+}
+
+function nextAccountingDate(dateKey) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+}
+
+function writeAccountingJson(filePath, value) {
+  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryPath, JSON.stringify(value, null, 2), { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporaryPath, filePath);
+}
+
+function readAccountingOrders() {
+  if (!fs.existsSync(ACCOUNTING_ORDERS_FILE)) return [];
+  const orders = JSON.parse(fs.readFileSync(ACCOUNTING_ORDERS_FILE, "utf8"));
+  if (!Array.isArray(orders)) throw new Error("Buchhaltungsdatei enthält keine Bestellliste.");
+  return orders;
+}
+
+function recordAccountingOrder(type, totalPrice, createdAt) {
+  if (!["material", "stank", "custom"].includes(type) || !Number.isSafeInteger(totalPrice) || totalPrice < 0) {
+    throw new Error("Ungültige Buchhaltungsdaten für Bestellung.");
+  }
+  const order = {
+    id: crypto.randomUUID(),
+    type,
+    totalPrice,
+    createdAt
+  };
+  const orders = readAccountingOrders();
+  orders.push(order);
+  writeAccountingJson(ACCOUNTING_ORDERS_FILE, orders);
+  return order.id;
+}
+
+function readAccountingReports() {
+  if (!fs.existsSync(ACCOUNTING_REPORTS_FILE)) {
+    const initial = { startedOn: accountingDateKey(), sentDates: [] };
+    writeAccountingJson(ACCOUNTING_REPORTS_FILE, initial);
+    return initial;
+  }
+  const state = JSON.parse(fs.readFileSync(ACCOUNTING_REPORTS_FILE, "utf8"));
+  if (!state || !/^\d{4}-\d{2}-\d{2}$/.test(state.startedOn) || !Array.isArray(state.sentDates)) {
+    throw new Error("Buchhaltungsstatus ist ungültig.");
+  }
+  return state;
+}
+
+function accountingDateIsDue(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Berlin",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, Number(part.value)]));
+  return values.hour > 0 || (values.hour === 0 && values.minute >= 5);
+}
+
+function summarizeAccountingDate(dateKey, orders) {
+  const totals = new Map([
+    ["material", { label: "Materialbestellungen", total: 0n, count: 0 }],
+    ["stank", { label: "STANK-Bestellungen", total: 0n, count: 0 }],
+    ["custom", { label: "Wunschbestellungen", total: 0n, count: 0 }]
+  ]);
+  let total = 0n;
+  let count = 0;
+
+  for (const order of orders) {
+    const timestamp = typeof order?.createdAt === "string" ? new Date(order.createdAt) : null;
+    if (!order || !Number.isSafeInteger(order.totalPrice) || order.totalPrice < 0
+      || !timestamp || Number.isNaN(timestamp.getTime()) || accountingDateKey(timestamp) !== dateKey) continue;
+    const category = totals.get(order.type);
+    if (!category) continue;
+    category.total += BigInt(order.totalPrice);
+    category.count += 1;
+    total += BigInt(order.totalPrice);
+    count += 1;
+  }
+
+  return { total, count, categories: [...totals.values()] };
+}
+
+async function sendAccountingReport(dateKey, orders) {
+  const summary = summarizeAccountingDate(dateKey, orders);
+  const embed = {
+    title: `Tagesbuchhaltung · ${dateKey.split("-").reverse().join(".")}`,
+    description: `**Bestellsumme: ${summary.total.toLocaleString("de-DE")} $**\n${summary.count} Bestellungen\n\nDie Summe zeigt erfasste Bestellbeträge, keine bestätigten Zahlungseingänge.`,
+    color: 0x3978d4,
+    fields: summary.categories.map(category => ({
+      name: category.label,
+      value: `${category.total.toLocaleString("de-DE")} $ · ${category.count} Bestellungen`,
+      inline: true
+    })),
+    footer: { text: "Ankauf-Angebote sind nicht enthalten." },
+    timestamp: new Date().toISOString()
+  };
+  const result = await postToDiscordChannel(
+    { embeds: [embed], allowed_mentions: { parse: [] } },
+    ACCOUNTING_CHANNEL_ID,
+    false
+  );
+  if (result.method === "local-only") {
+    throw new Error("Buchhaltungsbericht konnte nicht gesendet werden: DISCORD_BOT_TOKEN fehlt.");
+  }
+}
+
+let accountingReportInProgress = false;
+let lastAccountingReportError = "";
+
+async function runDailyAccountingReport() {
+  if (accountingReportInProgress || !accountingDateIsDue()) return;
+  accountingReportInProgress = true;
+  try {
+    const state = readAccountingReports();
+    const latestClosedDate = previousAccountingDate(accountingDateKey());
+    if (state.startedOn > latestClosedDate) return;
+    let reportDate = state.startedOn;
+    while (reportDate <= latestClosedDate && state.sentDates.includes(reportDate)) {
+      reportDate = nextAccountingDate(reportDate);
+    }
+    if (reportDate > latestClosedDate) return;
+
+    await sendAccountingReport(reportDate, readAccountingOrders());
+    state.sentDates.push(reportDate);
+    writeAccountingJson(ACCOUNTING_REPORTS_FILE, state);
+    lastAccountingReportError = "";
+    console.log(`Buchhaltungsbericht für ${reportDate} in Discord veröffentlicht.`);
+  } catch (error) {
+    const signature = error.message || String(error);
+    if (signature !== lastAccountingReportError) {
+      console.error("Buchhaltungsbericht konnte nicht veröffentlicht werden:", signature);
+      lastAccountingReportError = signature;
+    }
+  } finally {
+    accountingReportInProgress = false;
+  }
 }
 
 function normalizeShopProduct(product, fallbackId = crypto.randomUUID()) {
@@ -993,6 +1152,7 @@ async function handleMaterialOrder(req, res) {
       `Zeitstempel: ${new Date().toLocaleString("de-DE")}`
   };
   const discordPayload = buildMaterialOrderPayload(order);
+  recordAccountingOrder("material", totalPrice, order.createdAt);
 
   try {
     const result = await postToDiscordChannel(discordPayload);
@@ -1202,6 +1362,7 @@ async function handleStankOrder(req, res) {
       `STANK-Pflanzen: ${quantity}\n` +
       `Gesamtpreis: ${totalPrice.toLocaleString("de-DE")} $`
   };
+  recordAccountingOrder("stank", totalPrice, order.createdAt);
   try {
     const result = await postToDiscordChannel(
       buildStankOrderPayload(order),
@@ -1330,6 +1491,7 @@ async function handleCustomOrder(req, res) {
       items.map((item, index) => `${index + 1}. ${item.name}${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
       `\nGesamtsumme: ${totalPrice} $`
   };
+  recordAccountingOrder("custom", totalPrice, order.createdAt);
   try {
     const result = await postToDiscordChannel(
       buildCustomOrderPayload(order),
@@ -1613,8 +1775,13 @@ function startDiscordWelcomeBot() {
   });
 }
 
+setInterval(() => {
+  void runDailyAccountingReport();
+}, 60 * 1000);
+
 server.listen(PORT, HOST, () => {
   console.log(`Olymp Rechner läuft auf http://${HOST}:${PORT}`);
   if (!configIsReady(discordConfig())) console.log("Discord OAuth ist noch nicht konfiguriert. Bitte .env ausfüllen.");
   startDiscordWelcomeBot();
+  void runDailyAccountingReport();
 });
