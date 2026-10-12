@@ -19,6 +19,7 @@ const MAX_ITEMS = 10;
 let products = [];
 let cart = [];
 let weeklyBundle = null;
+let adRotationTimer = null;
 
 function formatPrice(value) {
   return `${numberFormatter.format(value)} $`;
@@ -205,7 +206,11 @@ function createProductCard(product) {
 
 function renderAds(ads) {
   adList.replaceChildren();
-  const validAds = ads.filter(ad => ad.title && ad.href);
+  const validAds = ads.filter(ad => ad.title && (ad.href || ad.image));
+  if (adRotationTimer) {
+    clearInterval(adRotationTimer);
+    adRotationTimer = null;
+  }
   if (!validAds.length) {
     const placeholder = document.createElement('p');
     placeholder.className = 'shop-ad-placeholder';
@@ -213,33 +218,66 @@ function renderAds(ads) {
     adList.append(placeholder);
     return;
   }
-  validAds.forEach(ad => {
-    const link = document.createElement('a');
-    link.className = 'shop-ad';
-    link.href = ad.href;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
+  let activeIndex = 0;
+  const slides = [];
+  const pagination = document.createElement('div');
+  pagination.className = 'shop-ad-pagination';
+  pagination.setAttribute('aria-label', 'Werbeanzeigen auswählen');
+  const dots = [];
+
+  function showAd(index) {
+    activeIndex = (index + validAds.length) % validAds.length;
+    slides.forEach((slide, slideIndex) => {
+      slide.hidden = slideIndex !== activeIndex;
+      dots[slideIndex].setAttribute('aria-current', String(slideIndex === activeIndex));
+    });
+  }
+
+  validAds.forEach((ad, index) => {
+    const slide = document.createElement(ad.href ? 'a' : 'div');
+    slide.className = 'shop-ad';
+    if (ad.href) {
+      slide.href = ad.href;
+      slide.target = '_blank';
+      slide.rel = 'noopener noreferrer';
+    }
+    slide.hidden = index !== 0;
     if (ad.image) {
       const image = document.createElement('img');
       image.src = ad.image;
       image.alt = ad.title;
-      link.append(image);
+      slide.append(image);
     }
     const title = document.createElement('strong');
     title.textContent = ad.title;
-    link.append(title);
+    slide.append(title);
     if (ad.text) {
       const text = document.createElement('span');
       text.textContent = ad.text;
-      link.append(text);
+      slide.append(text);
     }
     if (ad.linkLabel) {
       const linkLabel = document.createElement('em');
       linkLabel.textContent = ad.linkLabel;
-      link.append(linkLabel);
+      slide.append(linkLabel);
     }
-    adList.append(link);
+    slides.push(slide);
+    adList.append(slide);
+    if (validAds.length > 1) {
+      const dot = document.createElement('button');
+      dot.className = 'shop-ad-dot';
+      dot.type = 'button';
+      dot.setAttribute('aria-label', `Anzeige ${index + 1} anzeigen`);
+      dot.setAttribute('aria-current', String(index === 0));
+      dot.addEventListener('click', () => showAd(index));
+      dots.push(dot);
+      pagination.append(dot);
+    }
   });
+  if (dots.length) adList.append(pagination);
+  if (validAds.length > 1 && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    adRotationTimer = setInterval(() => showAd(activeIndex + 1), 6000);
+  }
 }
 
 function renderCart() {

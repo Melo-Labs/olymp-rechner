@@ -43,7 +43,12 @@ const WEEKLY_BUNDLE = {
 };
 const SHOP_CONTENT = {
   weeklyOffers: [],
-  ads: []
+  ads: [
+    {
+      title: "Werbefläche im OLYMP SHOP",
+      image: "/img/werbung1.png"
+    }
+  ]
 };
 
 function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
