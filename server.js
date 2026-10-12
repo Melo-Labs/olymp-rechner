@@ -284,17 +284,26 @@ async function logDiscordAccess(user, authorized, config) {
     const extension = user.avatar.startsWith("a_") ? "gif" : "png";
     embed.thumbnail = { url: `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=256` };
   }
-  if (config.redirectUri) {
-    try {
-      const publicOrigin = new URL(config.redirectUri).origin;
-      const statusImage = authorized ? "approved.png" : "denied.png";
-      embed.image = { url: new URL(`/img/${statusImage}`, publicOrigin).toString() };
-    } catch {}
+  const statusImage = authorized ? "approved.png" : "denied.png";
+  const message = { embeds: [embed], allowed_mentions: { parse: [] } };
+  const headers = { Authorization: `Bot ${config.botToken}` };
+  let body;
+  try {
+    const image = await fs.promises.readFile(path.join(ROOT, "img", statusImage));
+    embed.image = { url: `attachment://${statusImage}` };
+    const formData = new FormData();
+    formData.append("payload_json", JSON.stringify(message));
+    formData.append("files[0]", new Blob([image], { type: "image/png" }), statusImage);
+    body = formData;
+  } catch (error) {
+    console.error("Discord-Zugriffsbild konnte nicht angehängt werden:", error.message);
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(message);
   }
   const response = await discordFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: "POST",
-    headers: { "Authorization": `Bot ${config.botToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ embeds: [embed], allowed_mentions: { parse: [] } })
+    headers,
+    body
   });
   if (!response.ok) {
     const error = parseJson(await response.text());
