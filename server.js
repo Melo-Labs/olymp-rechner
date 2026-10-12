@@ -284,6 +284,13 @@ async function logDiscordAccess(user, authorized, config) {
     const extension = user.avatar.startsWith("a_") ? "gif" : "png";
     embed.thumbnail = { url: `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=256` };
   }
+  if (config.redirectUri) {
+    try {
+      const publicOrigin = new URL(config.redirectUri).origin;
+      const statusImage = authorized ? "approved.png" : "denied.png";
+      embed.image = { url: new URL(`/img/${statusImage}`, publicOrigin).toString() };
+    } catch {}
+  }
   const response = await discordFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: "POST",
     headers: { "Authorization": `Bot ${config.botToken}`, "Content-Type": "application/json" },
