@@ -4,11 +4,11 @@ const CATS=[
 {id:"poof",t:"POOF",grp:"Drogen",items:[["POOF-Paste",6090,21,4,1.5,[["Kokablätter",12,400],["Benzinkanister",4,360],["Phosphorsäure",4,1050],["Wismutsäure",4,1400],["Luftfilter III",1,3150]]],["POOF-Tütchen",6195,21,4,40/60,[["POOF-Paste",4],["Klebeband",4,50]]],["Kleines POOF-Päckchen",18480,7,4,0.5,[["POOF-Tütchen",12],["Klebeband",4,50]]],["POOF-Beutel",55650,2,4,0.5,[["Kleines POOF-Päckchen",12],["Polyethylenfolie",4,65]]],["POOF-Container",278250,0,1,0.75,[["POOF-Beutel",5],["Polyethylenfolie",2,65]]]]},
 {id:"stank",t:"STANK",grp:"Drogen",items:[["Roher STANK-Busch",420,312,18,2,[["STANK-Samen",18],["Dünger I",6,500]]],["STANK-Päckchen",3150,41,12,2,[["Roher STANK-Busch",36],["Dünger I",12,500],["Benzinkanister",6,360],["Luftfilter I",12,1350],["Klebeband",12,50],["Drehpapier",12,55]]],["STANK-Block",15750,8,2,0.5,[["STANK-Päckchen",10],["Polyethylenfolie",2,65],["Klebeband",2,50]]],["STANK-Container",78750,1,1,0.75,[["STANK-Block",5],["Polyethylenfolie",2,65]]]]},
 {id:"geld",t:"Falschgeld",items:[
-["Falsche Dollar",0.3,595238,12000,0.75,[['Papier I',6],['Farbe I',3]]],
-["Falsche Euro",0.3,694444,36000,2,[['Papier II',6],['Farbe II',3]]],
-["Falsche Pfund",0.3,833333,100000,4,[['Papier III',6],['Farbe III',3]]],
-["Falsche Franken",0.3,416666,170000,5,[['Papier III',9],['Farbe III',5]]]]},
-{id:"docs",t:"Gefälschte Dokumente",items:[["Bündel gefälschter Ausweise",525,250,2,27/60,[["Papier I",2],["Farbe I",1]]],["Akte einer Scheinfirma",2310,56,2,81/60,[["Papier II",3],["Farbe II",2]]],["Notarielle Akte",15120,8,1,162/60,[["Papier III",4],["Farbe III",2]]],["Offshore-Portfolio",30240,4,1,216/60,[["Papier III",8],["Farbe III",4]]]]}];
+["Falsche Dollar",0.3,595238,12000,0.75,[['Papier I',6,280],['Farbe I',3,420]]],
+["Falsche Euro",0.3,694444,36000,2,[['Papier II',6],['Farbe II',3,1341]]],
+["Falsche Pfund",0.3,833333,100000,4,[['Papier III',6,2505],['Farbe III',3]]],
+["Falsche Franken",0.3,416666,170000,5,[['Papier III',9,2505],['Farbe III',5]]]]},
+{id:"docs",t:"Gefälschte Dokumente",items:[["Bündel gefälschter Ausweise",525,250,2,27/60,[["Papier I",2,280],["Farbe I",1,420]]],["Akte einer Scheinfirma",2310,56,2,81/60,[["Papier II",3],["Farbe II",2,1341]]],["Notarielle Akte",15120,8,1,162/60,[["Papier III",4,2505],["Farbe III",2]]],["Offshore-Portfolio",30240,4,1,216/60,[["Papier III",8,2505],["Farbe III",4]]]]}];
 const KEY="produktionsrechner-v2";
 const LAB_UPGRADES={
 equipment:{title:"Ausrüstung",levels:[{label:"Keine Stufe",reduction:0},{label:"Zyklus 10 % kürzer · Zelle 24 Std.",reduction:0.1},{label:"Zyklus 20 % kürzer · Zelle 72 Std.",reduction:0.2},{label:"Zyklus 30 % kürzer · Zelle 168 Std.",reduction:0.3}]},
