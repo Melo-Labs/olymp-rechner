@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { verifyKey } = require("discord-interactions");
+const { AttachmentBuilder, Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js");
 
 function loadEnvFile() {
   const file = path.join(__dirname, ".env");
@@ -32,6 +33,8 @@ const STANK_ORDER_CHANNEL_ID = "1558497954921193592";
 const CUSTOM_ORDER_CHANNEL_ID = "1558508937400291338";
 const SELL_OFFER_CHANNEL_ID = process.env.DISCORD_SELL_OFFER_CHANNEL_ID || "1558812539805110434";
 const CATALOG_AUDIT_CHANNEL_ID = "1558539114662330419";
+const WELCOME_CHANNEL_ID = "1558193685860982880";
+const UNVERIFIED_ROLE_ID = "1558193824386261192";
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
 const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
@@ -1563,7 +1566,55 @@ const server = http.createServer((req, res) => {
   });
 });
 
+function startDiscordWelcomeBot() {
+  const config = discordConfig();
+  if (!config.botToken || !/^\d{17,20}$/.test(config.guildId)) {
+    console.warn("Discord-Willkommensbot nicht gestartet: Bot-Token oder Server-ID fehlt.");
+    return;
+  }
+
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+  client.once(Events.ClientReady, readyClient => {
+    console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
+  });
+  client.on(Events.Error, error => {
+    console.error("Discord-Willkommensbot-Verbindung fehlgeschlagen:", error.message);
+  });
+  client.on(Events.GuildMemberAdd, async member => {
+    if (member.guild.id !== config.guildId) return;
+
+    try {
+      await member.roles.add(UNVERIFIED_ROLE_ID, "Neue Mitglieder erhalten automatisch die Unverified-Rolle.");
+      const channel = await client.channels.fetch(WELCOME_CHANNEL_ID);
+      if (!channel?.isTextBased() || !channel.send) {
+        throw new Error("Der konfigurierte Willkommenskanal ist nicht beschreibbar.");
+      }
+
+      const attachment = new AttachmentBuilder(path.join(ROOT, "img", "willkommen.png"), { name: "willkommen.png" });
+      const embed = new EmbedBuilder()
+        .setColor(0x3976d2)
+        .setTitle(`Willkommen auf ${member.guild.name}!`)
+        .setDescription(`Hallo <@${member.id}>! Du hast automatisch die Unverified-Rolle erhalten. Bitte folge den Hinweisen auf dem Server.`)
+        .setImage("attachment://willkommen.png")
+        .setFooter({ text: "OLYMP • Willkommen" })
+        .setTimestamp();
+
+      await channel.send({
+        embeds: [embed],
+        files: [attachment],
+        allowedMentions: { users: [member.id] }
+      });
+    } catch (error) {
+      console.error(`Willkommensablauf für ${member.id} fehlgeschlagen:`, error.message);
+    }
+  });
+  client.login(config.botToken).catch(error => {
+    console.error("Discord-Willkommensbot konnte sich nicht verbinden:", error.message);
+  });
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`Olymp Rechner läuft auf http://${HOST}:${PORT}`);
   if (!configIsReady(discordConfig())) console.log("Discord OAuth ist noch nicht konfiguriert. Bitte .env ausfüllen.");
+  startDiscordWelcomeBot();
 });
