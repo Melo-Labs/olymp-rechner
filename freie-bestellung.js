@@ -18,6 +18,7 @@ const numberFormatter = new Intl.NumberFormat('de-DE');
 const MAX_ITEMS = 10;
 let products = [];
 let cart = [];
+let weeklyBundle = null;
 
 function formatPrice(value) {
   return `${numberFormatter.format(value)} $`;
@@ -25,8 +26,9 @@ function formatPrice(value) {
 
 function addToCart(item) {
   const existing = cart.find(entry => entry.type === item.type
-    && (item.type === 'catalog' ? entry.productId === item.productId : entry.name.toLocaleLowerCase() === item.name.toLocaleLowerCase()
-      && entry.pricePerItem === item.pricePerItem));
+    && (item.type === 'catalog' ? entry.productId === item.productId
+      : item.type === 'weeklyOffer' ? entry.weeklyOfferId === item.weeklyOfferId
+        : entry.name.toLocaleLowerCase() === item.name.toLocaleLowerCase() && entry.pricePerItem === item.pricePerItem));
   if (existing) {
     existing.quantity = Math.min(10000, existing.quantity + item.quantity);
   } else if (cart.length < MAX_ITEMS) {
@@ -63,11 +65,9 @@ function renderProducts() {
 
   if (offerProducts.length) {
     offerProducts.forEach(product => offersContainer.append(createProductCard(product)));
-  } else if (!hasSearch) {
-    const emptyOffers = document.createElement('p');
-    emptyOffers.className = 'empty-state';
-    emptyOffers.textContent = 'Diese Woche sind noch keine Angebote eingetragen.';
-    offersContainer.append(emptyOffers);
+  }
+  if (weeklyBundle && !hasSearch) {
+    renderWeeklyBundle();
   }
 
   if (!catalogProducts.length) {
@@ -112,6 +112,27 @@ function renderProducts() {
     group.append(list);
     productsContainer.append(group);
   });
+}
+
+function renderWeeklyBundle() {
+  const offer = document.createElement('div');
+  offer.className = 'weekly-offer-purchase';
+  const price = document.createElement('strong');
+  price.className = 'shop-price';
+  price.textContent = formatPrice(weeklyBundle.price);
+  const button = document.createElement('button');
+  button.className = 'shop-add';
+  button.type = 'button';
+  button.textContent = 'In den Warenkorb';
+  button.addEventListener('click', () => addToCart({
+    type: 'weeklyOffer',
+    weeklyOfferId: weeklyBundle.id,
+    name: weeklyBundle.name,
+    pricePerItem: weeklyBundle.price,
+    quantity: 1
+  }));
+  offer.append(price, button);
+  offersContainer.append(offer);
 }
 
 function createProductCard(product) {
@@ -310,7 +331,9 @@ form.addEventListener('submit', async (event) => {
 
   const items = cart.map(item => item.type === 'catalog'
     ? { type: 'catalog', productId: item.productId, quantity: item.quantity }
-    : { type: 'custom', name: item.name, quantity: item.quantity, pricePerItem: item.pricePerItem });
+    : item.type === 'weeklyOffer'
+      ? { type: 'weeklyOffer', weeklyOfferId: item.weeklyOfferId, quantity: item.quantity }
+      : { type: 'custom', name: item.name, quantity: item.quantity, pricePerItem: item.pricePerItem });
   const icName = icNameInput.value.trim();
   const phone = phoneInput.value.trim();
   statusBox.textContent = 'Bestellung wird gesendet...';
@@ -348,6 +371,7 @@ async function loadProducts() {
       throw new Error(result.message || 'Produkte konnten nicht geladen werden.');
     }
     products = result.products;
+    weeklyBundle = result.weeklyBundle || null;
     renderAds(Array.isArray(result.ads) ? result.ads : []);
     renderProducts();
   } catch (error) {

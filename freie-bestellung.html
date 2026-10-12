@@ -59,6 +59,9 @@
     .shop-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0}
     .shop-section-heading h2{margin:0;font:700 1.25rem/1.3 var(--display)}
     .shop-offer-list{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .weekly-offer-image{display:block;width:100%;height:auto;border:1px solid rgba(142,198,232,.3);border-radius:4px}
+    .weekly-offer-purchase{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border:1px solid rgba(142,198,232,.2);border-radius:4px;background:rgba(0,0,0,.2)}
+    .weekly-offer-purchase .shop-price{white-space:nowrap;font-size:1.35rem}
     .shop-grid{display:grid;gap:20px}
     .shop-category-group{display:grid;gap:12px}
     .shop-category-title{margin:0;color:#316d87;font:700 .8rem/1.2 var(--display);letter-spacing:.12em;text-transform:uppercase}
@@ -120,6 +123,7 @@
     .shop-offer-list>.empty-state{border-color:rgba(142,198,232,.16);color:var(--muted)}
     .shop-ad-placeholder{margin:0;padding:20px 14px;border:1px dashed rgba(142,198,232,.32);border-radius:4px;color:var(--muted);font-size:.9rem;line-height:1.5;text-align:center}
     @media(max-width:680px){.shop-card{padding:18px 14px}}
+    @media(max-width:520px){.weekly-offer-purchase{align-items:stretch;flex-direction:column}.weekly-offer-purchase .shop-add{width:100%}}
   </style>
 </head>
 <body>
@@ -150,6 +154,7 @@
           <div class="shop-main">
             <section id="weekly-offers" class="shop-section" aria-labelledby="offers-title">
               <div class="shop-section-heading"><h2 id="offers-title">Wochenangebote</h2></div>
+              <img class="weekly-offer-image" src="/img/wochenangebot.png" alt="Wochenangebot: Aktionspaket mit Westen, Revolvern, Karabinern, Medkits, Kabelbindern und Munition für 200.000 Dollar" fetchpriority="high">
               <div id="shop-offers" class="shop-offer-list" aria-live="polite"><p class="empty-state">Angebote werden geladen …</p></div>
             </section>
             <section id="shop-catalog" class="shop-section" aria-labelledby="catalog-title">

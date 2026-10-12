@@ -36,6 +36,11 @@ const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
 const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
 const BUYBACK_PRODUCTS_FILE = path.join(ROOT, "data", "buyback-products.json");
+const WEEKLY_BUNDLE = {
+  id: "wochenangebot-bundle",
+  name: "Wochenangebot (Aktionspaket)",
+  price: 200000
+};
 const SHOP_CONTENT = {
   weeklyOffers: [],
   ads: []
@@ -1245,7 +1250,7 @@ async function handleCustomOrder(req, res) {
     return;
   }
   for (const entry of payload.items) {
-    const type = entry?.type === "catalog" ? "catalog" : "custom";
+    const type = entry?.type === "catalog" ? "catalog" : entry?.type === "weeklyOffer" ? "weeklyOffer" : "custom";
     const quantity = Number(entry?.quantity);
     let name;
     let pricePerItem;
@@ -1257,6 +1262,13 @@ async function handleCustomOrder(req, res) {
       }
       name = product.name;
       pricePerItem = getShopPromotion(product)?.price ?? product.price;
+    } else if (type === "weeklyOffer") {
+      if (entry?.weeklyOfferId !== WEEKLY_BUNDLE.id) {
+        send(res, 400, JSON.stringify({ ok: false, message: "Das Wochenangebot ist nicht mehr verfügbar." }), "application/json; charset=utf-8");
+        return;
+      }
+      name = WEEKLY_BUNDLE.name;
+      pricePerItem = WEEKLY_BUNDLE.price;
     } else {
       name = String(entry?.name || "").trim();
       pricePerItem = Number(entry?.pricePerItem);
@@ -1376,7 +1388,7 @@ async function handleRequest(req, res) {
           available: product.available,
           promotion: getShopPromotion(product)
         }));
-      send(res, 200, JSON.stringify({ ok: true, products, ads: SHOP_CONTENT.ads }), "application/json; charset=utf-8");
+      send(res, 200, JSON.stringify({ ok: true, products, ads: SHOP_CONTENT.ads, weeklyBundle: WEEKLY_BUNDLE }), "application/json; charset=utf-8");
     } catch (error) {
       console.error("Shop-Katalog konnte nicht gelesen werden:", error.message);
       send(res, 500, JSON.stringify({ ok: false, message: "Der Produktkatalog ist momentan nicht verfügbar." }), "application/json; charset=utf-8");
