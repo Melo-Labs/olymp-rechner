@@ -266,17 +266,23 @@ async function logDiscordAccess(user, authorized, config) {
   const channelId = authorized ? config.allowedLogChannelId : config.deniedLogChannelId;
   const displayName = String(user.global_name || user.username || "Unbekannt").slice(0, 80);
   const embed = {
-    title: authorized ? "Discord-Zugriff gewährt" : "Discord-Zugriff abgelehnt",
+    author: { name: "OLYMP • ZUGRIFFSPROTOKOLL" },
+    title: authorized ? "Zugriff freigegeben" : "Zugriff verweigert",
+    description: authorized
+      ? "Discord-Identität bestätigt. Die erforderliche Serverrolle ist vorhanden."
+      : "Discord-Identität erkannt, aber die erforderliche Serverrolle fehlt.",
     color: authorized ? 0x48a868 : 0xd44c4c,
     fields: [
-      { name: "Discord-Profil", value: `<@${user.id}>\n${displayName}\nID: ${user.id}`, inline: true },
-      { name: "Ergebnis", value: authorized ? "Verified-Rolle vorhanden" : "Verified-Rolle fehlt", inline: true }
+      { name: "DISCORD-KONTO", value: `<@${user.id}>\n${displayName}`, inline: true },
+      { name: "ROLLENPRÜFUNG", value: authorized ? "✅ Berechtigung bestätigt" : "❌ Berechtigung fehlt", inline: true },
+      { name: "USER-ID", value: `\`${user.id}\``, inline: false }
     ],
+    footer: { text: "OLYMP • Sicherheitsprotokoll" },
     timestamp: new Date().toISOString()
   };
   if (user.avatar) {
     const extension = user.avatar.startsWith("a_") ? "gif" : "png";
-    embed.thumbnail = { url: `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=128` };
+    embed.thumbnail = { url: `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=256` };
   }
   const response = await discordFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: "POST",
