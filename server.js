@@ -993,9 +993,11 @@ function buildStankOrderPayload(order) {
 }
 
 function buildCustomOrderPayload(order) {
-  const itemList = order.items.map((item, index) =>
-    `**${index + 1}. ${item.name}**${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $${item.type === "custom" ? " Preisvorschlag" : " Festpreis"} = ${item.totalPrice.toLocaleString("de-DE")} $`
-  ).join("\n");
+  const itemList = Array.isArray(order.items) && order.items.length
+    ? order.items.map((item, index) =>
+      `**${index + 1}. ${item.name}**${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $${item.type === "custom" ? " Preisvorschlag" : " Festpreis"} = ${item.totalPrice.toLocaleString("de-DE")} $`
+    ).join("\n")
+    : order.discordDescription || "Bestellpositionen";
   return {
     content: "🛒 Neue Wunsch-Bestellung",
     embeds: [{
@@ -1017,9 +1019,9 @@ function buildCustomOrderPayload(order) {
 }
 
 function buildSellOfferPayload(order) {
-  const itemList = order.items.map(item =>
+  const itemList = Array.isArray(order.items) && order.items.length ? order.items.map(item =>
     `**${item.name}** — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $ = ${item.totalPrice.toLocaleString("de-DE")} $`
-  ).join("\n");
+  ).join("\n") : order.discordDescription || "Angebotspositionen";
   return {
     content: "💰 Neues Ankauf-Angebot",
     embeds: [{
@@ -1062,6 +1064,51 @@ function buildMaterialOrderPayload(order) {
     }],
     components: buildOrderComponents(order),
     allowed_mentions: { parse: [] }
+  };
+}
+
+function recoverAdminOrderFromDiscordMessage(orderId, payload) {
+  const message = payload.message;
+  const embed = message?.embeds?.[0];
+  const footer = String(embed?.footer?.text || "");
+  const type = footer.includes("Material-Ankauf")
+    ? "material"
+    : footer.includes("Ankauf")
+      ? "sell-offer"
+      : footer.includes("Wunsch-Bestellung")
+      ? "custom"
+      : footer.includes("STANK-Kauf")
+        ? "stank"
+        : "";
+  const channelIds = [ORDER_CHANNEL_ID, STANK_ORDER_CHANNEL_ID, CUSTOM_ORDER_CHANNEL_ID, SELL_OFFER_CHANNEL_ID];
+  if (!type || !channelIds.includes(String(payload.channel_id || "")) || !Array.isArray(embed.fields)) return null;
+
+  const fields = new Map(embed.fields.map(field => [String(field.name || ""), String(field.value || "")]));
+  const parseAmount = value => {
+    const amount = Number(String(value || "").replace(/[^\d-]/g, ""));
+    return Number.isSafeInteger(amount) && amount >= 0 ? amount : 0;
+  };
+  const createdAt = typeof embed.timestamp === "string" && !Number.isNaN(Date.parse(embed.timestamp))
+    ? embed.timestamp
+    : new Date().toISOString();
+  return {
+    id: orderId,
+    type,
+    status: fields.get("Status") || "Neu",
+    icName: fields.get("IC-Name") || "Unbekannt",
+    phone: fields.get("Handynummer") || fields.get("Handynummer / IC") || fields.get("Telefonnummer") || "",
+    totalPrice: parseAmount(fields.get("Gesamtsumme") || fields.get("Gesamtpreis")),
+    technical: parseAmount(fields.get("Technische Materialien")),
+    medical: parseAmount(fields.get("Medizinische Materialien")),
+    totalMaterials: parseAmount(fields.get("Gesamtanzahl")),
+    quantity: parseAmount(fields.get("STANK-Pflanzen")),
+    items: [],
+    discordDescription: String(embed.description || ""),
+    createdAt,
+    deliveryStatus: "bot",
+    discordChannelId: String(payload.channel_id),
+    discordMessageId: String(message.id),
+    recoveredFromDiscord: true
   };
 }
 
@@ -1134,6 +1181,14 @@ async function handleDiscordInteraction(req, res) {
           || orders.find(entry => entry.discordMessageId === messageId);
         if (order && order.id !== orderId) {
           console.warn(`Discord-Bestellbutton ${orderId} wurde über Nachrichten-ID ${messageId} zugeordnet.`);
+        }
+        if (!order) {
+          order = recoverAdminOrderFromDiscordMessage(orderId, payload);
+          if (order) {
+            orders.push(order);
+            writeAdminOrders(orders);
+            console.warn(`Bestellung ${orderId} wurde aus der Discord-Nachricht wiederhergestellt.`);
+          }
         }
       } catch (error) {
         console.error("Bestellübersicht konnte bei Discord-Interaktion nicht gelesen werden:", error.message);
