@@ -11,7 +11,8 @@ const statuses = [
 const typeLabels = {
   material: 'Materialbestellung',
   stank: 'STANK-Bestellung',
-  custom: 'Wunsch-Bestellung'
+  custom: 'Wunsch-Bestellung',
+  'sell-offer': 'Ankauf-Angebot'
 };
 let orders = [];
 
@@ -25,7 +26,7 @@ function orderDetails(order) {
     return `Technische Materialien: ${order.technical}\nMedizinische Materialien: ${order.medical}\nGesamtanzahl: ${order.totalMaterials}`;
   }
   if (order.type === 'stank') return `STANK-Pflanzen: ${order.quantity}`;
-  if (order.type === 'custom' && Array.isArray(order.items)) {
+  if ((order.type === 'custom' || order.type === 'sell-offer') && Array.isArray(order.items)) {
     return order.items.map(item =>
       `${item.quantity} × ${item.name} — ${Number(item.totalPrice).toLocaleString('de-DE')} $`
     ).join('\n');

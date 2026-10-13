@@ -503,6 +503,11 @@ const ORDER_STATUS_LABELS = {
 function readAdminOrders() {
   const orders = JSON.parse(fs.readFileSync(ADMIN_ORDERS_FILE, "utf8"));
   if (!Array.isArray(orders)) throw new Error("Admin-Bestelldatei enthält keine Bestellliste.");
+  for (const order of orders) {
+    if (!order.type && Number.isFinite(order.technical) && Number.isFinite(order.medical)) {
+      order.type = "material";
+    }
+  }
   return orders;
 }
 
@@ -558,7 +563,8 @@ function buildAdminOrderDiscordPayload(order) {
   const builders = {
     material: buildMaterialOrderPayload,
     stank: buildStankOrderPayload,
-    custom: buildCustomOrderPayload
+    custom: buildCustomOrderPayload,
+    "sell-offer": buildSellOfferPayload
   };
   const builder = builders[order.type];
   if (!builder) throw new Error(`Unbekannter Bestelltyp: ${order.type}`);
@@ -1010,6 +1016,30 @@ function buildCustomOrderPayload(order) {
   };
 }
 
+function buildSellOfferPayload(order) {
+  const itemList = order.items.map(item =>
+    `**${item.name}** — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $ = ${item.totalPrice.toLocaleString("de-DE")} $`
+  ).join("\n");
+  return {
+    content: "💰 Neues Ankauf-Angebot",
+    embeds: [{
+      title: "Neues Ankauf-Angebot",
+      description: itemList,
+      color: 0xd7ad72,
+      fields: [
+        { name: "IC-Name", value: order.icName, inline: true },
+        { name: "Telefonnummer", value: order.phone, inline: true },
+        { name: "Gesamtsumme", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
+        { name: "Status", value: order.status || "Neu", inline: true }
+      ],
+      footer: { text: "Olymp Rechner • Ankauf" },
+      timestamp: order.createdAt || new Date().toISOString()
+    }],
+    components: buildOrderComponents(order),
+    allowed_mentions: { parse: [] }
+  };
+}
+
 function buildMaterialOrderPayload(order) {
   return {
     content: "📦 Neue Material-Bestellung",
@@ -1151,7 +1181,8 @@ async function handleDiscordInteraction(req, res) {
       return;
     }
 
-    if (action === "material_order_contact" || action === "stank_order_contact" || action === "custom_order_contact") {
+    if (action === "material_order_contact" || action === "stank_order_contact"
+      || action === "custom_order_contact" || action === "sell-offer_order_contact") {
       const phone = payload.message?.embeds?.[0]?.fields
         ?.find(field => field.name === "Handynummer" || field.name === "Handynummer / IC")?.value;
       send(res, 200, JSON.stringify({
@@ -1270,6 +1301,7 @@ async function handleMaterialOrder(req, res) {
   const totalMaterials = technical + medical;
   const totalPrice = technical * 250 + medical * 150;
   const order = {
+    type: "material",
     technical,
     medical,
     icName,
@@ -1403,9 +1435,6 @@ async function handleSellOffer(req, res) {
     items.push({ productId: product.id, name: product.name, quantity, pricePerItem: product.price, totalPrice: itemTotal });
   }
 
-  const itemList = items.map(item =>
-    `**${item.name}** — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $ = ${item.totalPrice.toLocaleString("de-DE")} $`
-  ).join("\n");
   const sellOffer = {
     type: "sell-offer",
     items,
@@ -1415,26 +1444,13 @@ async function handleSellOffer(req, res) {
     status: "Neu",
     createdAt: new Date().toISOString()
   };
-  const discordPayload = {
-    content: "💰 Neues Ankauf-Angebot",
-    embeds: [{
-      title: "Neues Ankauf-Angebot",
-      description: itemList,
-      color: 0xd7ad72,
-      fields: [
-        { name: "IC-Name", value: icName, inline: true },
-        { name: "Telefonnummer", value: phone, inline: true },
-        { name: "Gesamtsumme", value: `${totalPrice.toLocaleString("de-DE")} $`, inline: true }
-      ],
-      footer: { text: "Olymp Rechner • Ankauf" },
-      timestamp: sellOffer.createdAt
-    }],
-    allowed_mentions: { parse: [] }
-  };
+  Object.assign(sellOffer, trackAdminOrder(sellOffer));
+  const discordPayload = buildSellOfferPayload(sellOffer);
 
   try {
-    const result = await postToDiscordChannel(discordPayload, SELL_OFFER_CHANNEL_ID);
+    const result = await postToDiscordChannel(discordPayload, SELL_OFFER_CHANNEL_ID, false);
     if (result.method === "local-only") {
+      recordOrderDelivery(sellOffer, "local-only");
       saveOrderLocally(sellOffer, "ankauf-angebote.json");
       send(res, 200, JSON.stringify({
         ok: true,
@@ -1443,6 +1459,7 @@ async function handleSellOffer(req, res) {
       }), "application/json; charset=utf-8");
       return;
     }
+    recordOrderDelivery(sellOffer, result.method, result);
 
     send(res, 200, JSON.stringify({
       ok: true,
@@ -1451,6 +1468,7 @@ async function handleSellOffer(req, res) {
     }), "application/json; charset=utf-8");
   } catch (error) {
     console.error("Ankauf-Angebot konnte nicht an Discord gesendet werden:", error.message);
+    recordOrderDelivery(sellOffer, "failed", {}, error.message || String(error));
     saveOrderLocally(sellOffer, "ankauf-angebote.json");
     send(res, 200, JSON.stringify({
       ok: true,
