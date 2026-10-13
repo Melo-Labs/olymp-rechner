@@ -1098,7 +1098,13 @@ async function handleDiscordInteraction(req, res) {
 
       let order;
       try {
-        order = readAdminOrders().find(entry => entry.id === orderId);
+        const orders = readAdminOrders();
+        const messageId = String(payload.message?.id || "");
+        order = orders.find(entry => entry.id === orderId && entry.discordMessageId === messageId)
+          || orders.find(entry => entry.discordMessageId === messageId);
+        if (order && order.id !== orderId) {
+          console.warn(`Discord-Bestellbutton ${orderId} wurde über Nachrichten-ID ${messageId} zugeordnet.`);
+        }
       } catch (error) {
         console.error("Bestellübersicht konnte bei Discord-Interaktion nicht gelesen werden:", error.message);
         send(res, 200, JSON.stringify({
@@ -1107,8 +1113,8 @@ async function handleDiscordInteraction(req, res) {
         }), "application/json; charset=utf-8");
         return;
       }
-      if (!order || order.discordMessageId !== payload.message?.id
-        || order.discordChannelId !== payload.channel_id) {
+      if (!order) {
+        console.warn(`Discord-Bestellbutton ${orderId} konnte keiner gespeicherten Bestellung zugeordnet werden (Nachricht ${String(payload.message?.id || "unbekannt")}).`);
         send(res, 200, JSON.stringify({
           type: 4,
           data: { content: "Diese Bestellnachricht ist nicht mehr verfügbar.", flags: 64 }
@@ -1120,7 +1126,7 @@ async function handleDiscordInteraction(req, res) {
       order.updatedAt = new Date().toISOString();
       order.updatedBy = String(payload.member?.user?.global_name || payload.member?.user?.username || "Discord-Admin").slice(0, 80);
       try {
-        order = updateAdminOrder(orderId, {
+        order = updateAdminOrder(order.id, {
           status: order.status,
           updatedAt: order.updatedAt,
           updatedBy: order.updatedBy
