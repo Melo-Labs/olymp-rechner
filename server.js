@@ -74,6 +74,7 @@ function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
 
 const CATALOG_FILE = resolvePersistentDataFile("CATALOG_FILE", "data/shop-products.json", LEGACY_CATALOG_FILE);
 const CATALOG_AUDIT_PENDING_FILE = resolvePersistentDataFile("CATALOG_AUDIT_PENDING_FILE", "data/shop-audit-pending.json", LEGACY_CATALOG_AUDIT_PENDING_FILE);
+const ADMIN_ORDERS_FILE = resolvePersistentDataFile("ADMIN_ORDERS_FILE", "data/admin-orders.json");
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
@@ -91,6 +92,8 @@ const staticFiles = new Map([
   ["/freie-bestellung.js", "freie-bestellung.js"],
   ["/admin/catalog", "catalog-admin.html"],
   ["/admin/catalog.js", "catalog-admin.js"],
+  ["/admin/orders", "orders-admin.html"],
+  ["/admin/orders.js", "orders-admin.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/script.js", "script.js"],
   ["/style.css", "style.css"],
@@ -189,7 +192,7 @@ function loginPage(error = "", title = "Produktionsrechner", redirectPath = "/pr
     cancelled: "Die Discord-Anmeldung wurde abgebrochen."
   };
   const message = messages[error] || "";
-  const adminPath = redirectPath === "/admin/catalog" ? redirectPath : "/admin/catalog";
+  const adminPath = ["/admin/catalog", "/admin/orders"].includes(redirectPath) ? redirectPath : "/admin/catalog";
   const authHref = title === "Admin Panel" ? `/auth/discord?next=${encodeURIComponent(adminPath)}` : "/auth/discord";
   return `<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung</title>
@@ -349,7 +352,7 @@ async function beginLogin(req, res, config) {
   if (!configIsReady(config)) {
     const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const requestedDestination = loginUrl.searchParams.get("next");
-    const isAdmin = requestedDestination === "/admin/catalog";
+    const isAdmin = ["/admin/catalog", "/admin/orders"].includes(requestedDestination);
     send(res, 503, loginPage("setup", isAdmin ? "Admin Panel" : "Produktionsrechner", requestedDestination || "/admin/catalog"), "text/html; charset=utf-8");
     return;
   }
@@ -359,7 +362,7 @@ async function beginLogin(req, res, config) {
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const requestedDestination = loginUrl.searchParams.get("next");
-  const redirectPath = requestedDestination === "/admin/catalog" ? requestedDestination : "";
+  const redirectPath = ["/admin/catalog", "/admin/orders"].includes(requestedDestination) ? requestedDestination : "";
   pendingLogins.set(state, { verifier, redirectPath, expiresAt: Date.now() + 10 * 60 * 1000 });
   appendCookie(res, makeCookie("olymp_oauth_state", state, 600));
   const query = new URLSearchParams({
@@ -487,6 +490,89 @@ function saveOrderLocally(order, fileName) {
 
 function saveMaterialOrderLocally(order) {
   return saveOrderLocally(order, "material-bestellungen.json");
+}
+
+const ORDER_STATUS_LABELS = {
+  new: "Neu",
+  accepted: "Angenommen",
+  processing: "In Bearbeitung",
+  completed: "Erledigt",
+  rejected: "Abgelehnt"
+};
+
+function readAdminOrders() {
+  const orders = JSON.parse(fs.readFileSync(ADMIN_ORDERS_FILE, "utf8"));
+  if (!Array.isArray(orders)) throw new Error("Admin-Bestelldatei enthält keine Bestellliste.");
+  return orders;
+}
+
+function writeAdminOrders(orders) {
+  writeAccountingJson(ADMIN_ORDERS_FILE, orders);
+}
+
+function trackAdminOrder(order) {
+  const orders = readAdminOrders();
+  const tracked = {
+    ...order,
+    id: crypto.randomUUID(),
+    status: "Neu",
+    deliveryStatus: "pending"
+  };
+  orders.push(tracked);
+  writeAdminOrders(orders);
+  return tracked;
+}
+
+function updateAdminOrder(orderId, updates) {
+  const orders = readAdminOrders();
+  const index = orders.findIndex(order => order.id === orderId);
+  if (index < 0) return null;
+  orders[index] = { ...orders[index], ...updates };
+  writeAdminOrders(orders);
+  return orders[index];
+}
+
+function buildOrderComponents(order) {
+  const controls = Object.entries(ORDER_STATUS_LABELS).filter(([value]) => value !== "new").map(([value, label]) => ({
+    type: 2,
+    style: value === "completed" ? 3 : value === "rejected" ? 4 : 2,
+    label,
+    custom_id: `order_status:${order.id}:${value}`,
+    disabled: order.status === label
+  }));
+  return [
+    { type: 1, components: controls },
+    {
+      type: 1,
+      components: [{
+        type: 2,
+        style: 2,
+        label: "Kontaktaufnahme",
+        custom_id: `${order.type}_order_contact`
+      }]
+    }
+  ];
+}
+
+function buildAdminOrderDiscordPayload(order) {
+  const builders = {
+    material: buildMaterialOrderPayload,
+    stank: buildStankOrderPayload,
+    custom: buildCustomOrderPayload
+  };
+  const builder = builders[order.type];
+  if (!builder) throw new Error(`Unbekannter Bestelltyp: ${order.type}`);
+  return builder(order);
+}
+
+function recordOrderDelivery(order, deliveryStatus, discordMessage = {}, deliveryError = "") {
+  const updated = updateAdminOrder(order.id, {
+    deliveryStatus,
+    discordChannelId: discordMessage.channelId || "",
+    discordMessageId: discordMessage.messageId || "",
+    deliveryError: deliveryError.slice(0, 240)
+  });
+  if (updated) Object.assign(order, updated);
 }
 
 function accountingDateKey(date = new Date()) {
@@ -688,7 +774,7 @@ function saveShopProducts(products) {
   fs.renameSync(temporaryFile, CATALOG_FILE);
 }
 
-async function requireCatalogAdmin(req, res, config) {
+async function requireCatalogAdmin(req, res, config, redirectPath = "/admin/catalog") {
   const deny = (status, message) => {
     if (String(req.headers.accept || "").includes("text/html")) {
       const page = `<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Produktverwaltung</title><body style="margin:0;padding:3rem;background:#101214;color:#ececec;font:16px/1.6 system-ui,sans-serif"><main style="max-width:640px;margin:auto"><h1>Produktverwaltung</h1><p>${message}</p><a style="color:#8ec6e8" href="/freie-bestellung.html">Zurück zum Shop</a></main></body></html>`;
@@ -716,7 +802,7 @@ async function requireCatalogAdmin(req, res, config) {
   }
   if (!session) {
     if (String(req.headers.accept || "").includes("text/html")) {
-      redirect(res, "/login?admin=1&next=/admin/catalog");
+      redirect(res, `/login?admin=1&next=${encodeURIComponent(redirectPath)}`);
     } else {
       send(res, 401, JSON.stringify({ ok: false, message: "Bitte melde dich mit deinem Discord-Admin-Konto an." }), "application/json; charset=utf-8");
     }
@@ -889,19 +975,13 @@ function buildStankOrderPayload(order) {
         { name: "Handynummer / IC", value: order.phone, inline: true },
         { name: "STANK-Pflanzen", value: `${order.quantity}`, inline: true },
         { name: "Preis pro Pflanze", value: "2.000 $", inline: true },
-        { name: "Gesamtpreis", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true }
+        { name: "Gesamtpreis", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
+        { name: "Status", value: order.status || "Neu", inline: true }
       ],
       footer: { text: "Olymp Rechner • STANK-Kauf" },
-      timestamp: new Date().toISOString()
+      timestamp: order.createdAt || new Date().toISOString()
     }],
-    components: [{
-      type: 1,
-      components: [
-        { type: 2, style: 2, label: "Kontaktaufnahme", custom_id: "stank_order_contact" },
-        { type: 2, style: 3, label: "Ausgeliefert", custom_id: "stank_order_delivered" },
-        { type: 2, style: 4, label: "Abgelehnt", custom_id: "stank_order_rejected" }
-      ]
-    }],
+    components: buildOrderComponents(order),
     allowed_mentions: { parse: [] }
   };
 }
@@ -919,19 +999,13 @@ function buildCustomOrderPayload(order) {
       fields: [
         { name: "IC-Name", value: order.icName, inline: true },
         { name: "Handynummer / IC", value: order.phone, inline: true },
-        { name: "Gesamtsumme", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true }
+        { name: "Gesamtsumme", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
+        { name: "Status", value: order.status || "Neu", inline: true }
       ],
       footer: { text: "Olymp Rechner • Wunsch-Bestellung" },
-      timestamp: new Date().toISOString()
+      timestamp: order.createdAt || new Date().toISOString()
     }],
-    components: [{
-      type: 1,
-      components: [
-        { type: 2, style: 2, label: "Kontaktaufnahme", custom_id: "custom_order_contact" },
-        { type: 2, style: 3, label: "Ausgeliefert", custom_id: "custom_order_delivered" },
-        { type: 2, style: 4, label: "Abgelehnt", custom_id: "custom_order_rejected" }
-      ]
-    }],
+    components: buildOrderComponents(order),
     allowed_mentions: { parse: [] }
   };
 }
@@ -950,34 +1024,13 @@ function buildMaterialOrderPayload(order) {
         { name: "Gesamtanzahl", value: `${order.totalMaterials}`, inline: true },
         { name: "Handynummer", value: order.phone || "—", inline: true },
         { name: "Gesamtpreis", value: `${order.totalPrice} $`, inline: true },
-        { name: "Zeitstempel", value: `${new Date().toLocaleString("de-DE")}`, inline: false }
+        { name: "Status", value: order.status || "Neu", inline: true },
+        { name: "Zeitstempel", value: `${new Date(order.createdAt || Date.now()).toLocaleString("de-DE")}`, inline: false }
       ],
       footer: { text: "Olymp Rechner • Material-Ankauf" },
-      timestamp: new Date().toISOString()
+      timestamp: order.createdAt || new Date().toISOString()
     }],
-    components: [{
-      type: 1,
-      components: [
-        {
-          type: 2,
-          style: 2,
-          label: "Kontaktaufnahme",
-          custom_id: "material_order_contact"
-        },
-        {
-          type: 2,
-          style: 3,
-          label: "Ausgeliefert",
-          custom_id: "material_order_delivered"
-        },
-        {
-          type: 2,
-          style: 4,
-          label: "Abgelehnt",
-          custom_id: "material_order_rejected"
-        }
-      ]
-    }],
+    components: buildOrderComponents(order),
     allowed_mentions: { parse: [] }
   };
 }
@@ -1028,6 +1081,70 @@ async function handleDiscordInteraction(req, res) {
 
   if (payload.type === 3 && payload.data?.component_type === 2) {
     const action = payload.data.custom_id;
+    const statusAction = /^order_status:([a-f0-9-]{36}):(accepted|processing|completed|rejected)$/i.exec(action || "");
+    if (statusAction) {
+      const [, orderId, statusKey] = statusAction;
+      const authorized = payload.guild_id === config.guildId
+        && /^\d{17,20}$/.test(config.catalogAdminRoleId)
+        && Array.isArray(payload.member?.roles)
+        && payload.member.roles.includes(config.catalogAdminRoleId);
+      if (!authorized) {
+        send(res, 200, JSON.stringify({
+          type: 4,
+          data: { content: "Du hast keine Berechtigung, den Bestellstatus zu ändern.", flags: 64 }
+        }), "application/json; charset=utf-8");
+        return;
+      }
+
+      let order;
+      try {
+        order = readAdminOrders().find(entry => entry.id === orderId);
+      } catch (error) {
+        console.error("Bestellübersicht konnte bei Discord-Interaktion nicht gelesen werden:", error.message);
+        send(res, 200, JSON.stringify({
+          type: 4,
+          data: { content: "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.", flags: 64 }
+        }), "application/json; charset=utf-8");
+        return;
+      }
+      if (!order || order.discordMessageId !== payload.message?.id
+        || order.discordChannelId !== payload.channel_id) {
+        send(res, 200, JSON.stringify({
+          type: 4,
+          data: { content: "Diese Bestellnachricht ist nicht mehr verfügbar.", flags: 64 }
+        }), "application/json; charset=utf-8");
+        return;
+      }
+
+      order.status = ORDER_STATUS_LABELS[statusKey];
+      order.updatedAt = new Date().toISOString();
+      order.updatedBy = String(payload.member?.user?.global_name || payload.member?.user?.username || "Discord-Admin").slice(0, 80);
+      try {
+        order = updateAdminOrder(orderId, {
+          status: order.status,
+          updatedAt: order.updatedAt,
+          updatedBy: order.updatedBy
+        });
+        const message = buildAdminOrderDiscordPayload(order);
+        send(res, 200, JSON.stringify({
+          type: 7,
+          data: {
+            content: message.content,
+            embeds: message.embeds,
+            components: message.components,
+            allowed_mentions: message.allowed_mentions
+          }
+        }), "application/json; charset=utf-8");
+      } catch (error) {
+        console.error("Bestellstatus konnte nicht gespeichert werden:", error.message);
+        send(res, 200, JSON.stringify({
+          type: 4,
+          data: { content: "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.", flags: 64 }
+        }), "application/json; charset=utf-8");
+      }
+      return;
+    }
+
     if (action === "material_order_contact" || action === "stank_order_contact" || action === "custom_order_contact") {
       const phone = payload.message?.embeds?.[0]?.fields
         ?.find(field => field.name === "Handynummer" || field.name === "Handynummer / IC")?.value;
@@ -1051,6 +1168,18 @@ async function handleDiscordInteraction(req, res) {
       return;
     }
 
+    const canManageOrders = payload.guild_id === config.guildId
+      && /^\d{17,20}$/.test(config.catalogAdminRoleId)
+      && Array.isArray(payload.member?.roles)
+      && payload.member.roles.includes(config.catalogAdminRoleId);
+    if (!canManageOrders) {
+      send(res, 200, JSON.stringify({
+        type: 4,
+        data: { content: "Du hast keine Berechtigung, den Bestellstatus zu ändern.", flags: 64 }
+      }), "application/json; charset=utf-8");
+      return;
+    }
+
     const status = action.endsWith("_delivered") ? "Ausgeliefert" : "Abgelehnt";
     send(res, 200, JSON.stringify({
       type: 7,
@@ -1070,7 +1199,9 @@ async function postToDiscordChannel(orderMessage, channelId = ORDER_CHANNEL_ID, 
   const payload = typeof orderMessage === "string" ? { content: orderMessage, allowed_mentions: { parse: [] } } : orderMessage;
 
   if (allowWebhook && ORDER_WEBHOOK_URL) {
-    const response = await discordFetch(ORDER_WEBHOOK_URL, {
+    const webhookUrl = new URL(ORDER_WEBHOOK_URL);
+    webhookUrl.searchParams.set("wait", "true");
+    const response = await discordFetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -1079,7 +1210,7 @@ async function postToDiscordChannel(orderMessage, channelId = ORDER_CHANNEL_ID, 
     if (!response.ok) {
       throw new Error(data?.message || "Webhook-Request fehlgeschlagen.");
     }
-    return { method: "webhook" };
+    return { method: "webhook", channelId: data?.channel_id || channelId, messageId: data?.id || "" };
   }
 
   if (config.botToken) {
@@ -1096,7 +1227,7 @@ async function postToDiscordChannel(orderMessage, channelId = ORDER_CHANNEL_ID, 
       const details = data?.errors ? ` ${JSON.stringify(data.errors)}` : "";
       throw new Error(`${data?.message || "Discord-API fehlgeschlagen."}${details}`);
     }
-    return { method: "bot" };
+    return { method: "bot", channelId: data?.channel_id || channelId, messageId: data?.id || "" };
   }
 
   return { method: "local-only" };
@@ -1151,12 +1282,14 @@ async function handleMaterialOrder(req, res) {
       `Gesamtpreis: ${totalPrice} $\n` +
       `Zeitstempel: ${new Date().toLocaleString("de-DE")}`
   };
+  Object.assign(order, trackAdminOrder(order));
   const discordPayload = buildMaterialOrderPayload(order);
   recordAccountingOrder("material", totalPrice, order.createdAt);
 
   try {
-    const result = await postToDiscordChannel(discordPayload);
+    const result = await postToDiscordChannel(discordPayload, ORDER_CHANNEL_ID, false);
     if (result.method === "local-only") {
+      recordOrderDelivery(order, "local-only");
       saveMaterialOrderLocally(order);
       send(res, 200, JSON.stringify({
         ok: true,
@@ -1168,6 +1301,7 @@ async function handleMaterialOrder(req, res) {
       }), "application/json; charset=utf-8");
       return;
     }
+    recordOrderDelivery(order, result.method, result);
 
     send(res, 200, JSON.stringify({
       ok: true,
@@ -1179,6 +1313,7 @@ async function handleMaterialOrder(req, res) {
     }), "application/json; charset=utf-8");
   } catch (error) {
     console.error("Material-Bestellung fehlgeschlagen:", error.message);
+    recordOrderDelivery(order, "failed", {}, error.message || String(error));
     saveMaterialOrderLocally(order);
     send(res, 200, JSON.stringify({
       ok: true,
@@ -1362,6 +1497,7 @@ async function handleStankOrder(req, res) {
       `STANK-Pflanzen: ${quantity}\n` +
       `Gesamtpreis: ${totalPrice.toLocaleString("de-DE")} $`
   };
+  Object.assign(order, trackAdminOrder(order));
   recordAccountingOrder("stank", totalPrice, order.createdAt);
   try {
     const result = await postToDiscordChannel(
@@ -1370,6 +1506,7 @@ async function handleStankOrder(req, res) {
       false
     );
     if (result.method === "local-only") {
+      recordOrderDelivery(order, "local-only");
       saveOrderLocally(order, "stank-bestellungen.json");
       send(res, 200, JSON.stringify({
         ok: true,
@@ -1381,6 +1518,7 @@ async function handleStankOrder(req, res) {
       }), "application/json; charset=utf-8");
       return;
     }
+    recordOrderDelivery(order, result.method, result);
 
     send(res, 200, JSON.stringify({
       ok: true,
@@ -1392,6 +1530,7 @@ async function handleStankOrder(req, res) {
     }), "application/json; charset=utf-8");
   } catch (error) {
     console.error("STANK-Bestellung fehlgeschlagen:", error.message);
+    recordOrderDelivery(order, "failed", {}, error.message || String(error));
     saveOrderLocally(order, "stank-bestellungen.json");
     send(res, 200, JSON.stringify({
       ok: true,
@@ -1491,6 +1630,7 @@ async function handleCustomOrder(req, res) {
       items.map((item, index) => `${index + 1}. ${item.name}${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
       `\nGesamtsumme: ${totalPrice} $`
   };
+  Object.assign(order, trackAdminOrder(order));
   recordAccountingOrder("custom", totalPrice, order.createdAt);
   try {
     const result = await postToDiscordChannel(
@@ -1499,6 +1639,7 @@ async function handleCustomOrder(req, res) {
       false
     );
     if (result.method === "local-only") {
+      recordOrderDelivery(order, "local-only");
       saveOrderLocally(order, "wunsch-bestellungen.json");
       send(res, 200, JSON.stringify({
         ok: true,
@@ -1510,6 +1651,7 @@ async function handleCustomOrder(req, res) {
       }), "application/json; charset=utf-8");
       return;
     }
+    recordOrderDelivery(order, result.method, result);
 
     send(res, 200, JSON.stringify({
       ok: true,
@@ -1521,6 +1663,7 @@ async function handleCustomOrder(req, res) {
     }), "application/json; charset=utf-8");
   } catch (error) {
     console.error("Wunsch-Bestellung fehlgeschlagen:", error.message);
+    recordOrderDelivery(order, "failed", {}, error.message || String(error));
     saveOrderLocally(order, "wunsch-bestellungen.json");
     send(res, 200, JSON.stringify({
       ok: true,
@@ -1564,6 +1707,78 @@ async function handleRequest(req, res) {
   }
   if (req.method === "POST" && pathname === "/api/wunsch-bestellung") {
     await handleCustomOrder(req, res);
+    return;
+  }
+  const orderStatusPath = pathname.match(/^\/api\/admin\/orders\/([a-f0-9-]{36})$/i);
+  if ((req.method === "GET" && pathname === "/api/admin/orders") || (req.method === "PATCH" && orderStatusPath)) {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/orders");
+    if (!adminSession) return;
+    if (req.method === "GET") {
+      try {
+        const orders = readAdminOrders().sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+        send(res, 200, JSON.stringify({ ok: true, orders }), "application/json; charset=utf-8");
+      } catch (error) {
+        console.error("Admin-Bestellübersicht konnte nicht gelesen werden:", error.message);
+        send(res, 500, JSON.stringify({ ok: false, message: "Die Bestellübersicht konnte nicht gelesen werden." }), "application/json; charset=utf-8");
+      }
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(await readRequestBody(req, 16 * 1024));
+    } catch {
+      send(res, 400, JSON.stringify({ ok: false, message: "Ungültige Statusdaten." }), "application/json; charset=utf-8");
+      return;
+    }
+    if (!Object.hasOwn(ORDER_STATUS_LABELS, payload?.status)) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Dieser Bestellstatus ist ungültig." }), "application/json; charset=utf-8");
+      return;
+    }
+
+    let order;
+    try {
+      order = updateAdminOrder(orderStatusPath[1], {
+        status: ORDER_STATUS_LABELS[payload.status],
+        updatedAt: new Date().toISOString(),
+        updatedBy: adminSession.discordName || adminSession.username || "Discord-Admin"
+      });
+    } catch (error) {
+      console.error("Bestellstatus konnte nicht gespeichert werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Der Bestellstatus konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+      return;
+    }
+    if (!order) {
+      send(res, 404, JSON.stringify({ ok: false, message: "Bestellung nicht gefunden." }), "application/json; charset=utf-8");
+      return;
+    }
+
+    let discordSynced = false;
+    let warning = "";
+    if (order.discordChannelId && order.discordMessageId) {
+      try {
+        const discordResponse = await discordFetch(
+          `https://discord.com/api/v10/channels/${encodeURIComponent(order.discordChannelId)}/messages/${encodeURIComponent(order.discordMessageId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bot ${config.botToken}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(buildAdminOrderDiscordPayload(order))
+          }
+        );
+        const responseBody = parseJson(await discordResponse.text());
+        if (!discordResponse.ok) {
+          throw new Error(`Discord API HTTP ${discordResponse.status}: ${String(responseBody?.message || "Unbekannter Fehler").slice(0, 160)}`);
+        }
+        discordSynced = true;
+      } catch (error) {
+        warning = "Status wurde gespeichert, aber die Discord-Nachricht konnte nicht aktualisiert werden.";
+        console.error(`Discord-Bestellnachricht ${order.discordMessageId} konnte nicht aktualisiert werden:`, error.message);
+      }
+    }
+    send(res, 200, JSON.stringify({ ok: true, order, discordSynced, warning }), "application/json; charset=utf-8");
     return;
   }
   if (req.method === "GET" && pathname === "/api/shop/products") {
@@ -1689,6 +1904,12 @@ async function handleRequest(req, res) {
   }
   if (pathname === "/admin/catalog" || pathname === "/admin/catalog.js") {
     const adminSession = await requireCatalogAdmin(req, res, config);
+    if (!adminSession) return;
+    serveStatic(req, res, pathname);
+    return;
+  }
+  if (pathname === "/admin/orders" || pathname === "/admin/orders.js") {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/orders");
     if (!adminSession) return;
     serveStatic(req, res, pathname);
     return;

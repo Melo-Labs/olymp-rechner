@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bestellverwaltung</title>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    :root{--bg:#0b0d10;--line:rgba(142,198,232,.18);--mut:#b4bec8;--text:#edf3fb;--ok:#72d9b1;--bad:#ff8f8f;--accent:#8ec6e8;--tx:var(--text);--ac:var(--accent)}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:radial-gradient(circle at top,rgba(142,198,232,.14),transparent 30%),var(--bg);color:var(--text);font:16px/1.5 var(--body),system-ui,sans-serif}
+    main{max-width:1100px;margin:0 auto;padding:32px 16px 64px}
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:24px}
+    .topbar a{color:var(--tx);text-decoration:none;font-weight:700}
+    .topbar .back{margin-left:auto}
+    h1{margin:0 0 8px;font-size:clamp(1.8rem,5vw,3rem)}
+    .lead,.hint{color:var(--mut);line-height:1.6}
+    .panel,.order{padding:20px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(21,25,29,.96),rgba(10,12,14,.96));box-shadow:0 28px 34px -28px rgba(0,0,0,.9)}
+    .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+    select,button{min-height:42px;padding:9px 12px;border:1px solid rgba(142,198,232,.22);border-radius:9px;background:#101418;color:var(--tx);font:inherit}
+    button{font-weight:700;cursor:pointer}
+    button:hover{border-color:var(--ac)}
+    button:disabled{opacity:.55;cursor:wait}
+    .order-list{display:grid;gap:14px}
+    .order{padding:18px;background:linear-gradient(180deg,rgba(17,20,24,.9),rgba(9,13,16,.82))}
+    .order-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    h2{font-size:1.15rem;margin:0}
+    .meta,.details,.delivery{color:var(--mut);margin:8px 0 0}
+    .status{display:inline-flex;padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--text);font-weight:700}
+    .details{white-space:pre-line}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+    .actions button.active{background:linear-gradient(135deg,#d8edf8,#8ec6e8);color:#0d1418;border-color:transparent}
+    .status-message{min-height:24px;margin:12px 0 0}
+    .status-message.error{color:var(--bad)}.status-message.success{color:var(--ok)}
+    .empty{color:var(--mut);padding:18px 4px}
+    @media(max-width:520px){main{padding-top:22px}.panel{padding:14px}.order{padding:14px}.actions button{flex:1 1 42%}}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <strong>OLYMP · SHOP ADMIN</strong>
+      <a href="/admin/catalog">Produktverwaltung</a>
+      <a class="back" href="/freie-bestellung.html">← Zum Shop</a>
+    </div>
+    <h1>Bestellverwaltung</h1>
+    <p class="lead">Material-, STANK- und Wunschbestellungen dauerhaft einsehen und ihren Bearbeitungsstatus aktualisieren.</p>
+    <section class="panel">
+      <div class="toolbar">
+        <label for="status-filter">Status anzeigen:</label>
+        <select id="status-filter">
+          <option value="">Alle Status</option>
+          <option>Neu</option>
+          <option>Angenommen</option>
+          <option>In Bearbeitung</option>
+          <option>Erledigt</option>
+          <option>Abgelehnt</option>
+        </select>
+        <button id="refresh-orders" type="button">Aktualisieren</button>
+      </div>
+      <div id="orders" class="order-list" aria-live="polite">Bestellungen werden geladen …</div>
+      <p id="status-message" class="status-message" aria-live="polite"></p>
+      <p class="hint">Die Übersicht liegt in <code>data/admin-orders.json</code>. Bei flüchtigem Serverspeicher muss ein persistentes Volume eingebunden sein.</p>
+    </section>
+  </main>
+  <script src="/admin/orders.js"></script>
+</body>
+</html>
