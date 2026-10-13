@@ -64,7 +64,8 @@ function renderOrders() {
     title.append(heading, meta);
     const badge = document.createElement('span');
     badge.className = 'status';
-    badge.textContent = order.status || 'Neu';
+    const closed = order.status === 'Angenommen' || order.status === 'Abgelehnt';
+    badge.textContent = closed ? `${order.status} · Abgeschlossen` : order.status || 'Neu';
     head.append(title, badge);
 
     const details = document.createElement('p');
@@ -86,7 +87,7 @@ function renderOrders() {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = status.label;
-      button.disabled = order.status === status.label;
+      button.disabled = closed || order.status === status.label;
       if (button.disabled) button.classList.add('active');
       button.addEventListener('click', () => updateStatus(order, status.value, button));
       actions.append(button);

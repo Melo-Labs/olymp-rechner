@@ -537,7 +537,16 @@ function updateAdminOrder(orderId, updates) {
   return orders[index];
 }
 
+function isAdminOrderClosed(order) {
+  return order.status === "Angenommen" || order.status === "Abgelehnt";
+}
+
+function displayAdminOrderStatus(order) {
+  return isAdminOrderClosed(order) ? `${order.status} · Abgeschlossen` : order.status || "Neu";
+}
+
 function buildOrderComponents(order) {
+  if (isAdminOrderClosed(order)) return [];
   const controls = Object.entries(ORDER_STATUS_LABELS).filter(([value]) => value !== "new").map(([value, label]) => ({
     type: 2,
     style: value === "completed" ? 3 : value === "rejected" ? 4 : 2,
@@ -982,7 +991,7 @@ function buildStankOrderPayload(order) {
         { name: "STANK-Pflanzen", value: `${order.quantity}`, inline: true },
         { name: "Preis pro Pflanze", value: "2.000 $", inline: true },
         { name: "Gesamtpreis", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
-        { name: "Status", value: order.status || "Neu", inline: true }
+        { name: "Status", value: displayAdminOrderStatus(order), inline: true }
       ],
       footer: { text: "Olymp Rechner • STANK-Kauf" },
       timestamp: order.createdAt || new Date().toISOString()
@@ -1008,7 +1017,7 @@ function buildCustomOrderPayload(order) {
         { name: "IC-Name", value: order.icName, inline: true },
         { name: "Handynummer / IC", value: order.phone, inline: true },
         { name: "Gesamtsumme", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
-        { name: "Status", value: order.status || "Neu", inline: true }
+        { name: "Status", value: displayAdminOrderStatus(order), inline: true }
       ],
       footer: { text: "Olymp Rechner • Wunsch-Bestellung" },
       timestamp: order.createdAt || new Date().toISOString()
@@ -1032,7 +1041,7 @@ function buildSellOfferPayload(order) {
         { name: "IC-Name", value: order.icName, inline: true },
         { name: "Telefonnummer", value: order.phone, inline: true },
         { name: "Gesamtsumme", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
-        { name: "Status", value: order.status || "Neu", inline: true }
+        { name: "Status", value: displayAdminOrderStatus(order), inline: true }
       ],
       footer: { text: "Olymp Rechner • Ankauf" },
       timestamp: order.createdAt || new Date().toISOString()
@@ -1056,7 +1065,7 @@ function buildMaterialOrderPayload(order) {
         { name: "Gesamtanzahl", value: `${order.totalMaterials}`, inline: true },
         { name: "Handynummer", value: order.phone || "—", inline: true },
         { name: "Gesamtpreis", value: `${order.totalPrice} $`, inline: true },
-        { name: "Status", value: order.status || "Neu", inline: true },
+        { name: "Status", value: displayAdminOrderStatus(order), inline: true },
         { name: "Zeitstempel", value: `${new Date(order.createdAt || Date.now()).toLocaleString("de-DE")}`, inline: false }
       ],
       footer: { text: "Olymp Rechner • Material-Ankauf" },
@@ -1203,6 +1212,19 @@ async function handleDiscordInteraction(req, res) {
         send(res, 200, JSON.stringify({
           type: 4,
           data: { content: "Diese Bestellnachricht ist nicht mehr verfügbar.", flags: 64 }
+        }), "application/json; charset=utf-8");
+        return;
+      }
+      if (isAdminOrderClosed(order)) {
+        const message = buildAdminOrderDiscordPayload(order);
+        send(res, 200, JSON.stringify({
+          type: 7,
+          data: {
+            content: message.content,
+            embeds: message.embeds,
+            components: [],
+            allowed_mentions: message.allowed_mentions
+          }
         }), "application/json; charset=utf-8");
         return;
       }
@@ -1829,6 +1851,14 @@ async function handleRequest(req, res) {
     }
     if (!order) {
       send(res, 404, JSON.stringify({ ok: false, message: "Bestellung nicht gefunden." }), "application/json; charset=utf-8");
+      return;
+    }
+    if (isAdminOrderClosed(order)) {
+      send(res, 409, JSON.stringify({
+        ok: false,
+        message: "Diese Bestellung ist bereits abgeschlossen und kann nicht mehr geändert werden.",
+        order
+      }), "application/json; charset=utf-8");
       return;
     }
 
