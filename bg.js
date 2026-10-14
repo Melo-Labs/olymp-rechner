@@ -1,110 +1,218 @@
 (function(){
-  var bg=document.createElement('div');bg.className='bg';bg.setAttribute('aria-hidden','true');
-  bg.innerHTML='<div class="aurora"><i></i><i></i><i></i></div><div class="dots"></div><canvas id="net"></canvas><div class="vignette"></div>';
-  document.body.insertBefore(bg,document.body.firstChild);
+  var background = document.createElement('div');
+  background.className = 'bg';
+  background.setAttribute('aria-hidden', 'true');
+  background.innerHTML = '<div class="aurora"><i></i><i></i><i></i></div><div class="dots"></div><canvas id="net"></canvas><div class="vignette"></div>';
+  document.body.insertBefore(background, document.body.firstChild);
 })();
 
 (function(){
-  var key='olymp-fps-saver';
-  var isFpsSaver = localStorage.getItem(key) === '1';
-  document.body.classList.toggle('fps-saver', isFpsSaver);
+  var key = 'olymp-fps-saver';
   var toggle = document.getElementById('fps-saver-toggle');
+
+  function getFpsPreference(){
+    try { return localStorage.getItem(key) === '1'; }
+    catch (error) { return false; }
+  }
+
+  function setFpsPreference(enabled){
+    try { localStorage.setItem(key, enabled ? '1' : '0'); }
+    catch (error) { /* The current-page preference still applies if storage is unavailable. */ }
+  }
+
+  function applyFpsPreference(enabled, notify){
+    document.body.classList.toggle('fps-saver', enabled);
+    if (toggle && toggle.checked !== enabled) toggle.checked = enabled;
+    if (notify) {
+      window.dispatchEvent(new CustomEvent('olymp-fps-saver-change', { detail: { enabled: enabled } }));
+    }
+  }
+
+  applyFpsPreference(getFpsPreference(), false);
   if (toggle) {
-    toggle.checked = isFpsSaver;
     toggle.addEventListener('change', function(){
       var enabled = toggle.checked;
-      localStorage.setItem(key, enabled ? '1' : '0');
-      document.body.classList.toggle('fps-saver', enabled);
-      window.dispatchEvent(new CustomEvent('olymp-fps-saver-change', { detail: { enabled: enabled } }));
+      setFpsPreference(enabled);
+      applyFpsPreference(enabled, true);
     });
   }
 })();
 
-if(matchMedia('(hover:hover) and (prefers-reduced-motion:no-preference)').matches && !document.body.classList.contains('fps-saver')){
-  document.querySelectorAll('.panel').forEach(function(p){
-    p.addEventListener('pointermove',function(e){
-      var r=p.getBoundingClientRect();
-      var x=(e.clientX-r.left)/r.width-.5,y=(e.clientY-r.top)/r.height-.5;
-      p.style.setProperty('--ry',(x*8).toFixed(2)+'deg');
-      p.style.setProperty('--rx',(-y*8).toFixed(2)+'deg');
-    });
-    p.addEventListener('pointerleave',function(){
-      p.style.setProperty('--rx','0deg');p.style.setProperty('--ry','0deg');
-    });
-  });
-}
-
-
 (function(){
-  var c=document.getElementById('net');
-  if(!c)return;
-  var x=c.getContext('2d');
-  if(!x)return;
-  var dpr=Math.min(devicePixelRatio||1,2),W,H,P=[],m={x:-999,y:-999},frameId=0;
-  var linkDistance=130,linkDistanceSquared=linkDistance*linkDistance;
-  var calm = matchMedia('(prefers-reduced-motion:reduce)').matches || localStorage.getItem('olymp-fps-saver') === '1';
+  var reducedMotion = matchMedia('(prefers-reduced-motion:reduce)');
+  var fpsPreferenceKey = 'olymp-fps-saver';
+  var calm = reducedMotion.matches || document.body.classList.contains('fps-saver');
+
+  if (matchMedia('(hover:hover)').matches) {
+    document.querySelectorAll('.panel').forEach(function(panel){
+      panel.addEventListener('pointermove', function(event){
+        if (calm) return;
+        var rect = panel.getBoundingClientRect();
+        var x = (event.clientX - rect.left) / rect.width - .5;
+        var y = (event.clientY - rect.top) / rect.height - .5;
+        panel.style.setProperty('--ry', (x * 8).toFixed(2) + 'deg');
+        panel.style.setProperty('--rx', (-y * 8).toFixed(2) + 'deg');
+      });
+      panel.addEventListener('pointerleave', function(){
+        panel.style.setProperty('--rx', '0deg');
+        panel.style.setProperty('--ry', '0deg');
+      });
+    });
+  }
+
+  var canvas = document.getElementById('net');
+  if (!canvas) return;
+  var context = canvas.getContext('2d');
+  if (!context) return;
+
+  var dpr = Math.min(devicePixelRatio || 1, 2);
+  var width;
+  var height;
+  var points = [];
+  var mouse = { x: -999, y: -999 };
+  var frameId = 0;
+  var linkDistance = 130;
+  var linkDistanceSquared = linkDistance * linkDistance;
+
+  function isMotionRestricted(){
+    var fpsRestricted = document.body.classList.contains('fps-saver');
+    try { fpsRestricted = fpsRestricted || localStorage.getItem(fpsPreferenceKey) === '1'; }
+    catch (error) { /* Fall back to the body class when storage is unavailable. */ }
+    return fpsRestricted || reducedMotion.matches;
+  }
+
+  calm = isMotionRestricted();
+
   function size(){
-    W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;x.setTransform(dpr,0,0,dpr,0,0);
-    var n=Math.min(110,Math.floor(W*H/14000));P=[];
-    for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.28,vy:(Math.random()-.5)*.28,r:Math.random()*1.4+.6,h:Math.random()<.55?'214,219,226':'168,158,146'});
+    width = innerWidth;
+    height = innerHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var count = Math.min(110, Math.floor(width * height / 14000));
+    points = [];
+    for (var i = 0; i < count; i++) {
+      points.push({
+        x: Math.random() * width,
+        y: Math.random() * height,
+        vx: (Math.random() - .5) * .28,
+        vy: (Math.random() - .5) * .28,
+        radius: Math.random() * 1.4 + .6,
+        hue: Math.random() < .55 ? '214,219,226' : '168,158,146'
+      });
+    }
   }
+
   function schedule(){
-    if(!frameId&&!calm&&!document.hidden)frameId=requestAnimationFrame(frame);
+    if (!frameId && !calm && !document.hidden) frameId = requestAnimationFrame(draw);
   }
+
   function stop(){
-    if(frameId)cancelAnimationFrame(frameId);
-    frameId=0;
+    if (frameId) cancelAnimationFrame(frameId);
+    frameId = 0;
   }
-  function frame(){
-    frameId=0;
-    x.clearRect(0,0,W,H);
-    var cells=new Map();
-    for(var i=0;i<P.length;i++){
-      var p=P[i];
-      if(!calm){
-        p.x+=p.vx;p.y+=p.vy;
-        if(p.x<0||p.x>W)p.vx*=-1;
-        if(p.y<0||p.y>H)p.vy*=-1;
-        var dx=p.x-m.x,dy=p.y-m.y,d=dx*dx+dy*dy;
-        if(d<22500){var f=(1-d/22500)*.9;p.x+=dx*f*.03;p.y+=dy*f*.03;}
+
+  function draw(){
+    frameId = 0;
+    context.clearRect(0, 0, width, height);
+    var cells = new Map();
+
+    for (var i = 0; i < points.length; i++) {
+      var point = points[i];
+      if (!calm) {
+        point.x += point.vx;
+        point.y += point.vy;
+        if (point.x < 0 || point.x > width) point.vx *= -1;
+        if (point.y < 0 || point.y > height) point.vy *= -1;
+        var dx = point.x - mouse.x;
+        var dy = point.y - mouse.y;
+        var distance = dx * dx + dy * dy;
+        if (distance < 22500) {
+          var force = (1 - distance / 22500) * .9;
+          point.x += dx * force * .03;
+          point.y += dy * force * .03;
+        }
       }
-      var cellX=Math.floor(p.x/linkDistance),cellY=Math.floor(p.y/linkDistance),cellKey=cellX+','+cellY;
-      if(!cells.has(cellKey))cells.set(cellKey,[]);
+      var cellX = Math.floor(point.x / linkDistance);
+      var cellY = Math.floor(point.y / linkDistance);
+      var cellKey = cellX + ',' + cellY;
+      if (!cells.has(cellKey)) cells.set(cellKey, []);
       cells.get(cellKey).push(i);
     }
-    for(var i=0;i<P.length;i++){
-      var p=P[i],cellX=Math.floor(p.x/linkDistance),cellY=Math.floor(p.y/linkDistance);
-      x.fillStyle='rgba('+p.h+',.85)';x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill();
-      for(var offsetY=-1;offsetY<=1;offsetY++)for(var offsetX=-1;offsetX<=1;offsetX++){
-        var neighbors=cells.get((cellX+offsetX)+','+(cellY+offsetY));
-        if(!neighbors)continue;
-        for(var neighborIndex=0;neighborIndex<neighbors.length;neighborIndex++){
-          var j=neighbors[neighborIndex];
-          if(j<=i)continue;
-          var q=P[j],ax=p.x-q.x,ay=p.y-q.y,dd=ax*ax+ay*ay;
-          if(dd<linkDistanceSquared){x.strokeStyle='rgba('+p.h+','+(.3*(1-dd/linkDistanceSquared)).toFixed(3)+')';x.lineWidth=1;x.beginPath();x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);x.stroke();}
+
+    for (var index = 0; index < points.length; index++) {
+      var current = points[index];
+      var currentCellX = Math.floor(current.x / linkDistance);
+      var currentCellY = Math.floor(current.y / linkDistance);
+      context.fillStyle = 'rgba(' + current.hue + ',.85)';
+      context.beginPath();
+      context.arc(current.x, current.y, current.radius, 0, 6.283);
+      context.fill();
+
+      for (var offsetY = -1; offsetY <= 1; offsetY++) {
+        for (var offsetX = -1; offsetX <= 1; offsetX++) {
+          var neighbors = cells.get((currentCellX + offsetX) + ',' + (currentCellY + offsetY));
+          if (!neighbors) continue;
+          for (var neighborIndex = 0; neighborIndex < neighbors.length; neighborIndex++) {
+            var neighborId = neighbors[neighborIndex];
+            if (neighborId <= index) continue;
+            var neighbor = points[neighborId];
+            var xDistance = current.x - neighbor.x;
+            var yDistance = current.y - neighbor.y;
+            var squaredDistance = xDistance * xDistance + yDistance * yDistance;
+            if (squaredDistance < linkDistanceSquared) {
+              context.strokeStyle = 'rgba(' + current.hue + ',' + (.3 * (1 - squaredDistance / linkDistanceSquared)).toFixed(3) + ')';
+              context.lineWidth = 1;
+              context.beginPath();
+              context.moveTo(current.x, current.y);
+              context.lineTo(neighbor.x, neighbor.y);
+              context.stroke();
+            }
+          }
         }
       }
     }
     schedule();
   }
-  function handleModeChange(){
-    calm = matchMedia('(prefers-reduced-motion:reduce)').matches || localStorage.getItem('olymp-fps-saver') === '1';
-    if(calm){
+
+  function handleMotionChange(){
+    calm = isMotionRestricted();
+    if (calm) {
       stop();
-      x.clearRect(0,0,W,H);
+      context.clearRect(0, 0, width, height);
       return;
     }
     schedule();
   }
+
   function handleVisibilityChange(){
-    if(document.hidden){stop();return;}
+    if (document.hidden) {
+      stop();
+      return;
+    }
     schedule();
   }
-  window.addEventListener('olymp-fps-saver-change', handleModeChange);
-  document.addEventListener('visibilitychange',handleVisibilityChange);
-  addEventListener('resize',function(){size();if(calm)frame();});
-  addEventListener('pointermove',function(e){if(!calm){m.x=e.clientX;m.y=e.clientY;}},{passive:true});
+
+  window.addEventListener('olymp-fps-saver-change', handleMotionChange);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  if (typeof reducedMotion.addEventListener === 'function') reducedMotion.addEventListener('change', handleMotionChange);
+  else if (typeof reducedMotion.addListener === 'function') reducedMotion.addListener(handleMotionChange);
+  addEventListener('resize', function(){
+    size();
+    if (calm) {
+      context.clearRect(0, 0, width, height);
+      return;
+    }
+    schedule();
+  });
+  addEventListener('pointermove', function(event){
+    if (!calm) {
+      mouse.x = event.clientX;
+      mouse.y = event.clientY;
+    }
+  }, { passive: true });
+
   size();
-  if(calm)frame();else schedule();
+  if (calm) draw();
+  else schedule();
 })();

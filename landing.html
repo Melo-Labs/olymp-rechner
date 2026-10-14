@@ -1,240 +1,337 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Auswahl</title>
-<style>
-:root{
-  --void:#050505;
-  --text:#ececec;
-  --muted:#8f9298;
-  --display:"Orbitron","Eurostile","Segoe UI",sans-serif;
-  --body:"Exo 2","Segoe UI",system-ui,sans-serif;
-}
-*{box-sizing:border-box}
-html{background:var(--void)}
-body{
-  margin:0;min-height:100vh;min-height:100svh;overflow-x:hidden;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:clamp(28px,6vh,64px) 20px clamp(28px,6vh,64px);
-  color:var(--text);font-family:var(--body);
-}
-.settings-panel{
-  position:fixed;top:18px;right:18px;z-index:20;
-  display:flex;align-items:center;justify-content:flex-end;
-}
-.settings-card{
-  display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid rgba(228,232,238,.18);
-  background:rgba(12,14,18,.78);border-radius:18px;color:var(--text);backdrop-filter:blur(8px);
-  box-shadow:0 12px 28px rgba(0,0,0,.22);
-}
-.settings-label{
-  display:block;font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700;
-}
-.settings-toggle{
-  display:inline-flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid rgba(228,232,238,.16);
-  background:rgba(255,255,255,.02);border-radius:12px;color:var(--text);font-size:.9rem;font-weight:600;
-}
-.settings-toggle input{
-  width:16px;height:16px;accent-color:#8ec6e8;cursor:pointer;
-}
-body.fps-saver .scan,
-body.fps-saver .hud .r1,
-body.fps-saver .hud .r2,
-body.fps-saver .panel,
-body.fps-saver .cta,
-body.fps-saver .slot,
-body.fps-saver .aurora i,
-body.fps-saver .bg{ animation:none !important; transition:none !important; }
-body.fps-saver .panel{ transform:none !important; }
-body.fps-saver .settings-card{ border-color:rgba(142,198,232,.5); }
-body.fps-saver .settings-toggle{ border-color:rgba(142,198,232,.45); background:rgba(142,198,232,.08); }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080a0c">
+  <title>OLYMP | Produktionsrechner und Bestellungen</title>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    :root {
+      --page-bg: #080a0c;
+      --surface: rgba(16, 19, 22, .94);
+      --surface-hover: #171b1f;
+      --ink: #eceef0;
+      --copy: #c1c7cc;
+      --muted: #949da5;
+      --line: rgba(223, 229, 234, .17);
+      --line-strong: rgba(223, 229, 234, .34);
+      --route-calculator: #d8dce0;
+      --route-material: #c9bda9;
+      --route-sale: #d7ad72;
+      --route-stank: #91c77b;
+      --route-shop: #8ec6e8;
+      --community-accent: #8ec6e8;
+      --page-width: 1120px;
+      --page-gutter: clamp(18px, 4vw, 40px);
+    }
 
-header{text-align:center;margin-bottom:clamp(30px,6vh,56px)}
-h1{
-  margin:0;font:900 clamp(1.7rem,4.6vw,3.4rem)/1.1 var(--display);letter-spacing:.07em;
-  text-shadow:0 0 18px rgba(255,255,255,.32),0 0 48px rgba(255,255,255,.1);
-}
-header p{margin:14px 0 0;color:var(--muted);font-size:clamp(1rem,1.5vw,1.15rem);letter-spacing:.04em}
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--page-bg); }
+    body.landing-page {
+      min-height: 100vh;
+      min-height: 100svh;
+      margin: 0;
+      overflow-x: clip;
+      padding: clamp(28px, 6vh, 62px) 0 34px;
+      background: transparent;
+      color: var(--ink);
+      font: 16px/1.5 var(--body);
+      -webkit-font-smoothing: antialiased;
+    }
+    body.landing-page .bg { opacity: .58; }
+    body.landing-page .aurora i { opacity: .22; filter: blur(115px); }
+    body.landing-page .dots { opacity: .4; }
+    body.landing-page #net { opacity: .28; }
+    a { color: inherit; }
 
-.grid{
-  width:min(1260px,100%);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:clamp(20px,3.5vw,40px);
-}
-.slot{
-  --a:#e4e8ee;
-  --t1:rgba(24,27,32,.84);--t2:rgba(11,12,15,.92);
-  filter:drop-shadow(0 0 14px color-mix(in srgb,var(--a) 16%,transparent));
-  transition:filter .3s ease;
-}
-.slot.buy{--a:#c9bfb0;--t1:rgba(31,29,26,.84);--t2:rgba(13,12,11,.92)}
-.slot.sell{--a:#d7ad72;--t1:rgba(34,27,20,.84);--t2:rgba(15,11,8,.92)}
-.slot.stank{--a:#91c77b;--t1:rgba(25,32,24,.84);--t2:rgba(10,14,10,.92)}
-.slot.custom-order{--a:#8ec6e8;--t1:rgba(22,30,35,.84);--t2:rgba(9,13,16,.92)}
-.slot:hover,.slot:focus-within{filter:drop-shadow(0 0 28px color-mix(in srgb,var(--a) 38%,transparent))}
+    .page-shell {
+      width: min(var(--page-width), calc(100% - var(--page-gutter) * 2));
+      margin-inline: auto;
+    }
+    .page-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 30px;
+    }
+    .heading-copy { min-width: 0; }
+    .wordmark {
+      display: block;
+      margin-bottom: 9px;
+      color: var(--muted);
+      font: 700 12px/1.2 var(--display);
+      letter-spacing: .14em;
+    }
+    h1 {
+      margin: 0;
+      color: var(--ink);
+      font: 700 clamp(30px, 4vw, 48px)/1.12 var(--display);
+      letter-spacing: .015em;
+    }
+    .page-intro {
+      margin: 9px 0 0;
+      color: var(--copy);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    .fps-toggle {
+      display: inline-flex;
+      min-height: 48px;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 11px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      background: rgba(14, 17, 20, .88);
+      color: var(--copy);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color .18s ease, background .18s ease;
+    }
+    .fps-toggle:hover { border-color: var(--line-strong); background: var(--surface-hover); }
+    .fps-toggle input {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+      margin: 0;
+      accent-color: var(--route-shop);
+      cursor: pointer;
+    }
+    .fps-toggle:focus-within { outline: 2px solid var(--route-shop); outline-offset: 3px; }
 
-.panel{
-  --cut:28px;
-  --shape:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut));
-  position:relative;isolation:isolate;overflow:hidden;
-  display:flex;flex-direction:column;justify-content:flex-end;min-height:410px;
-  padding:34px 30px 30px;color:inherit;text-decoration:none;
-  background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 14%,transparent) 45%,var(--a));
-  clip-path:var(--shape);
-  transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));
-  transition:transform .18s ease-out;
-}
-.panel::before{
-  content:"";position:absolute;inset:1px;z-index:-1;clip-path:var(--shape);
-  background:
-    linear-gradient(color-mix(in srgb,var(--a) 7%,transparent) 1px,transparent 1px) 0 0/28px 28px,
-    linear-gradient(90deg,color-mix(in srgb,var(--a) 7%,transparent) 1px,transparent 1px) 0 0/28px 28px,
-    linear-gradient(165deg,var(--t1),var(--t2));
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-}
-.panel:focus-visible{outline:2px solid var(--a);outline-offset:6px}
+    .workflow-board {
+      display: grid;
+      grid-template-columns: minmax(270px, .78fr) minmax(0, 1.6fr);
+      align-items: stretch;
+      gap: 16px;
+    }
+    .workflow-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-auto-rows: minmax(174px, auto);
+      gap: 12px;
+      min-width: 0;
+    }
+    .workflow-link {
+      --task-accent: var(--route-calculator);
+      position: relative;
+      isolation: isolate;
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 22px 23px 20px;
+      border: 0;
+      background: transparent;
+      color: var(--ink);
+      text-decoration: none;
+      transition: transform .18s cubic-bezier(.16, 1, .3, 1), border-color .18s ease;
+    }
+    .workflow-link::before {
+      position: absolute;
+      z-index: -1;
+      inset: -1px;
+      border: 1px solid color-mix(in srgb, var(--task-accent) 24%, var(--line));
+      background: var(--surface);
+      clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+      content: "";
+      transition: border-color .18s ease, background .18s ease;
+    }
+    .workflow-link:hover { transform: translateY(-2px); }
+    .workflow-link:hover::before { border-color: color-mix(in srgb, var(--task-accent) 57%, var(--line)); background: var(--surface-hover); }
+    .workflow-link:active { transform: translateY(0); }
+    .workflow-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
+    .workflow-link--calculator { --task-accent: var(--route-calculator); min-height: 100%; justify-content: space-between; padding: 27px 25px 24px; }
+    .workflow-link--material { --task-accent: var(--route-material); }
+    .workflow-link--sale { --task-accent: var(--route-sale); }
+    .workflow-link--stank { --task-accent: var(--route-stank); }
+    .workflow-link--shop { --task-accent: var(--route-shop); }
+    .task-icon {
+      display: block;
+      width: 42px;
+      height: 42px;
+      flex: 0 0 auto;
+      margin-bottom: 22px;
+      color: var(--task-accent);
+    }
+    .task-icon * { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+    .task-icon .icon-detail { stroke-width: 1.7; }
+    .task-title {
+      margin: 0;
+      color: var(--ink);
+      font: 700 19px/1.24 var(--display);
+      letter-spacing: .01em;
+      overflow-wrap: anywhere;
+    }
+    .task-description {
+      max-width: 38ch;
+      margin: 9px 0 0;
+      color: var(--copy);
+      font-size: 15px;
+      line-height: 1.48;
+    }
+    .task-action {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: auto;
+      padding-top: 18px;
+      color: var(--task-accent);
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .task-action-arrow { font-size: 19px; line-height: 1; }
+    .workflow-link--calculator .task-title { font-size: 24px; }
+    .workflow-link--calculator .task-description { max-width: 28ch; }
+    .workflow-link--calculator .task-action { padding-top: 28px; }
 
-/* Scan-Strahl beim Hover */
-.scan{
-  position:absolute;left:0;right:0;top:0;height:2px;opacity:0;pointer-events:none;
-  background:linear-gradient(90deg,transparent,var(--a),transparent);
-  box-shadow:0 0 18px 4px color-mix(in srgb,var(--a) 38%,transparent);
-}
-.panel:hover .scan,.panel:focus-visible .scan{animation:scan .9s ease-out 1}
-@keyframes scan{0%{top:0;opacity:1}100%{top:100%;opacity:0}}
+    .discord-entry {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      width: min(620px, 100%);
+      margin: 28px auto 0;
+      padding: 12px 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+      text-decoration: none;
+      transition: color .18s ease;
+    }
+    .discord-entry-action { display: inline-flex; align-items: center; gap: 7px; color: var(--community-accent); font-weight: 700; white-space: nowrap; }
+    .discord-entry:hover { color: var(--ink); }
+    .discord-entry:focus-visible { outline: 2px solid var(--community-accent); outline-offset: 4px; }
 
-/* Ringe */
-.hud{position:absolute;top:26px;right:26px;width:clamp(96px,12vw,128px);height:auto;color:var(--a)}
-.hud *{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
-.hud .r1{stroke-width:1.2;stroke-dasharray:3 7;transform-origin:60px 60px;animation:spin 26s linear infinite}
-.hud .r2{stroke-width:2;stroke-dasharray:62 18 12 18;transform-origin:60px 60px;animation:spin 18s linear infinite reverse}
-.hud .r3{stroke-width:1;opacity:.5}
-.hud .ic{stroke-width:1.5;filter:drop-shadow(0 0 4px currentColor)}
-@keyframes spin{to{transform:rotate(360deg)}}
+    body.landing-page.fps-saver .aurora i,
+    body.landing-page.fps-saver .workflow-link,
+    body.landing-page.fps-saver .workflow-link::before,
+    body.landing-page.fps-saver .discord-entry { animation: none !important; transition: none !important; }
+    body.landing-page.fps-saver .workflow-link:hover { transform: none; }
+    @media (prefers-reduced-motion: reduce) {
+      body.landing-page .aurora i,
+      body.landing-page .workflow-link,
+      body.landing-page .workflow-link::before,
+      body.landing-page .fps-toggle,
+      body.landing-page .discord-entry { animation: none !important; transition: none !important; }
+      body.landing-page .workflow-link:hover { transform: none; }
+    }
 
-h2{margin:0;font:700 clamp(1.6rem,3vw,2.2rem)/1.15 var(--display);letter-spacing:.05em;text-shadow:0 0 14px color-mix(in srgb,var(--a) 45%,transparent)}
-.panel p{margin:12px 0 0;max-width:32ch;color:var(--muted);font-size:1.05rem;line-height:1.55}
-.cta{
-  margin-top:26px;display:flex;align-items:center;justify-content:space-between;
-  padding:14px 18px;border:1px solid var(--a);color:var(--a);
-  font-weight:600;font-size:1rem;letter-spacing:.05em;
-  background:color-mix(in srgb,var(--a) 8%,transparent);
-  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px));
-  transition:background .25s ease,color .25s ease;
-}
-.cta svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .25s ease}
-.panel:hover .cta,.panel:focus-visible .cta{background:var(--a);color:#0a0a0b}
-.panel:hover .cta svg,.panel:focus-visible .cta svg{transform:translateX(5px)}
-
-@media (max-width:760px){
-  .grid{grid-template-columns:1fr}
-  .panel{min-height:360px}
-}
-@media (min-width:761px) and (max-width:1050px){
-  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-}
-@media (prefers-reduced-motion:reduce){
-  .aurora i,.hud .r1,.hud .r2,.panel:hover .scan{animation:none}
-  .panel,.cta,.cta svg,.slot{transition:none}
-}
-</style>
-<link rel="stylesheet" href="/theme.css">
+    @media (max-width: 900px) {
+      .workflow-board { grid-template-columns: 1fr; }
+      .workflow-link--calculator {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-rows: auto auto auto;
+        align-items: start;
+        column-gap: 20px;
+        padding: 20px 22px;
+      }
+      .workflow-link--calculator .task-icon { grid-column: 2; grid-row: 1 / 3; width: 34px; height: 34px; margin: 0; }
+      .workflow-link--calculator .task-title { grid-column: 1; grid-row: 1; }
+      .workflow-link--calculator .task-description { grid-column: 1; grid-row: 2; margin-top: 5px; }
+      .workflow-link--calculator .task-action { grid-column: 1 / -1; grid-row: 3; padding-top: 14px; }
+    }
+    @media (max-width: 620px) {
+      body.landing-page { padding-top: 28px; }
+      .page-shell { width: calc(100% - 32px); }
+      .page-header { align-items: stretch; flex-direction: column; gap: 17px; margin-bottom: 21px; }
+      .wordmark { margin-bottom: 7px; font-size: 11px; }
+      h1 { max-width: 16ch; font-size: clamp(27px, 8vw, 34px); }
+      .page-intro { margin-top: 7px; font-size: 15px; }
+      .fps-toggle { width: fit-content; min-height: 48px; }
+      .workflow-board { gap: 10px; }
+      .workflow-grid { grid-template-columns: 1fr; grid-auto-rows: auto; gap: 8px; }
+      .workflow-link {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto auto auto;
+        align-items: start;
+        gap: 3px;
+        min-height: 94px;
+        padding: 14px 16px;
+      }
+      .workflow-link--calculator { min-height: 94px; padding: 14px 16px; }
+      .workflow-link .task-title,
+      .workflow-link--calculator .task-title { grid-column: 1; grid-row: 1; font-size: 17px; }
+      .workflow-link .task-description,
+      .workflow-link--calculator .task-description { grid-column: 1; grid-row: 2; max-width: 46ch; margin-top: 0; font-size: 14px; }
+      .workflow-link .task-action,
+      .workflow-link--calculator .task-action { grid-column: 1; grid-row: 3; width: fit-content; margin-top: 3px; padding: 3px 0 0; font-size: 13px; }
+      .task-action-arrow { font-size: 17px; }
+      .workflow-link .task-icon,
+      .workflow-link--calculator .task-icon { display: none; }
+      .discord-entry { margin-top: 19px; font-size: 13px; }
+      .discord-entry-action { font-size: 13px; }
+    }
+    @media (max-width: 360px) {
+      .discord-entry { align-items: flex-start; flex-direction: column; gap: 5px; }
+    }
+  </style>
 </head>
-<body>
+<body class="landing-page">
+  <div class="page-shell">
+    <header class="page-header">
+      <div class="heading-copy">
+        <span class="wordmark">OLYMP</span>
+        <h1>Wähle deinen Bereich</h1>
+        <p class="page-intro">Produktionsrechner und Bestellungen.</p>
+      </div>
+      <label class="fps-toggle" for="fps-saver-toggle">
+        <input id="fps-saver-toggle" type="checkbox">
+        <span>FPS sparende Variante</span>
+      </label>
+    </header>
 
-<div class="settings-panel" aria-live="polite">
-  <div class="settings-card">
-    <span class="settings-label">Einstellungen</span>
-    <label class="settings-toggle" for="fps-saver-toggle">
-      <input id="fps-saver-toggle" type="checkbox">
-      <span>FPS sparende Variante</span>
-    </label>
-  </div>
-</div>
+    <main class="workflow-board" aria-label="Bereiche">
+      <a class="workflow-link workflow-link--calculator" href="/produktions-rechner.html">
+        <svg class="task-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <g class="icon-detail" stroke-width="1.7"><rect x="7" y="3.5" width="18" height="25" rx="2.5"/><rect x="10" y="7" width="12" height="5" rx="1"/><path d="M11 17h.01M16 17h.01M21 17h.01M11 21.5h.01M16 21.5h.01M21 21.5h.01M11 26h.01M16 26h.01M21 26h.01"/></g>
+        </svg>
+        <h2 class="task-title">Rechner</h2>
+        <p class="task-description">Preise, Rohstoffe und Gewinn für die Produktion berechnen.</p>
+        <span class="task-action">Produktion berechnen <span class="task-action-arrow" aria-hidden="true">→</span></span>
+      </a>
 
-<header>
-  <h1>Wähle deinen Bereich</h1>
-  <p>Produktionsrechner und Bestellungen.</p>
-</header>
+      <nav class="workflow-grid" aria-label="Bestellungen und Angebote">
+        <a class="workflow-link workflow-link--material" href="/material-ankauf.html">
+          <h2 class="task-title">Materialkauf</h2>
+          <p class="task-description">Technisch 250 $ pro Stück · Medizinisch 150 $ pro Stück.</p>
+          <span class="task-action">Materialbedarf einreichen <span class="task-action-arrow" aria-hidden="true">→</span></span>
+        </a>
+        <a class="workflow-link workflow-link--sale" href="/ankauf.html">
+          <h2 class="task-title">Ankauf</h2>
+          <p class="task-description">Gegenstände zu den aufgeführten Stückpreisen anbieten.</p>
+          <span class="task-action">Angebot einreichen <span class="task-action-arrow" aria-hidden="true">→</span></span>
+        </a>
+        <a class="workflow-link workflow-link--stank" href="/stank-kauf.html">
+          <svg class="task-icon" viewBox="0 0 32 32" aria-hidden="true">
+            <g class="icon-detail" stroke-width="1.7"><path d="M16 3c2.8 5.2-.7 6.3.6 9.5 1.8-.9 3.6-3.5 3.8-5.2 4.1 4.2 5.2 8.2 3.3 12.3a8.4 8.4 0 0 1-15.9-3.4C7.8 11.4 11.2 7.2 16 3Z"/><path d="M16.7 17c1.9 2 .8 5.2-1.3 6.5"/></g>
+          </svg>
+          <h2 class="task-title">STANK Kauf</h2>
+          <p class="task-description">2.000 $ pro Pflanze.</p>
+          <span class="task-action">STANK bestellen <span class="task-action-arrow" aria-hidden="true">→</span></span>
+        </a>
+        <a class="workflow-link workflow-link--shop" href="/freie-bestellung.html">
+          <h2 class="task-title">Shop &amp; Wunsch-Bestellung</h2>
+          <p class="task-description">Festpreisprodukte bestellen oder Wunschgegenstände ergänzen.</p>
+          <span class="task-action">Bestellung erstellen <span class="task-action-arrow" aria-hidden="true">→</span></span>
+        </a>
+      </nav>
+    </main>
 
-<main class="grid">
-  <div class="slot calc">
-    <a class="panel" href="/produktions-rechner.html">
-      <span class="scan" aria-hidden="true"></span>
-      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
-        <circle class="r1" cx="60" cy="60" r="56"/>
-        <circle class="r2" cx="60" cy="60" r="44"/>
-        <circle class="r3" cx="60" cy="60" r="32"/>
-        <g class="ic" transform="translate(42 42) scale(1.5)"><rect x="5" y="2.5" width="14" height="19" rx="2"/><rect x="8" y="5.5" width="8" height="3.5" rx=".6"/><path d="M8.5 13h.01M12 13h.01M15.5 13h.01M8.5 16.5h.01M12 16.5h.01M15.5 16.5h.01"/></g>
-      </svg>
-      <h2>Rechner</h2>
-      <p>Preise, Rohstoffe und Gewinn für die Produktion berechnen.</p>
-      <span class="cta">Rechner öffnen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+    <a class="discord-entry" href="https://discord.gg/cvvx2peK4C" target="_blank" rel="noopener noreferrer" aria-label="Handels Organisations Discord. Discord beitreten. Öffnet in neuem Tab.">
+      <span>Handels Organisations Discord</span>
+      <span class="discord-entry-action">Discord beitreten <span aria-hidden="true">↗</span></span>
     </a>
   </div>
 
-  <div class="slot buy">
-    <a class="panel" href="/material-ankauf.html">
-      <span class="scan" aria-hidden="true"></span>
-      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
-        <circle class="r1" cx="60" cy="60" r="56"/>
-        <circle class="r2" cx="60" cy="60" r="44"/>
-        <circle class="r3" cx="60" cy="60" r="32"/>
-        <g class="ic" transform="translate(42 42) scale(1.5)"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/></g>
-      </svg>
-      <h2>Material Ankauf</h2>
-      <p>Bedarf, Lieferumfang und Bestellhinweise im Überblick.</p>
-      <span class="cta">Ankauf öffnen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-    </a>
-  </div>
-
-  <div class="slot sell">
-    <a class="panel" href="/ankauf.html">
-      <span class="scan" aria-hidden="true"></span>
-      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
-        <circle class="r1" cx="60" cy="60" r="56"/>
-        <circle class="r2" cx="60" cy="60" r="44"/>
-        <circle class="r3" cx="60" cy="60" r="32"/>
-        <g class="ic" transform="translate(42 42) scale(1.5)"><path d="M3 7h18l-2 13H5L3 7z"/><path d="M8 7a4 4 0 0 1 8 0M8 12h8M8 16h5"/></g>
-      </svg>
-      <h2>Ankauf</h2>
-      <p>Biete uns Gegenstände an, die du verkaufen möchtest.</p>
-      <span class="cta">Angebot einreichen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-    </a>
-  </div>
-
-  <div class="slot stank">
-    <a class="panel" href="/stank-kauf.html">
-      <span class="scan" aria-hidden="true"></span>
-      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
-        <circle class="r1" cx="60" cy="60" r="56"/>
-        <circle class="r2" cx="60" cy="60" r="44"/>
-        <circle class="r3" cx="60" cy="60" r="32"/>
-        <g class="ic" transform="translate(42 42) scale(1.5)"><path d="M12 2c2 5-2 6-1 9 2-1 4-4 4-6 4 4 5 8 3 12a7 7 0 0 1-13-3c0-4 3-8 7-12z"/><path d="M12 14c2 2 1 5-1 6"/></g>
-      </svg>
-      <h2>STANK Kauf</h2>
-      <p>STANK-Pflanzen für 2.000 $ pro Stück bestellen.</p>
-      <span class="cta">STANK bestellen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-    </a>
-  </div>
-
-  <div class="slot custom-order">
-    <a class="panel" href="/freie-bestellung.html">
-      <span class="scan" aria-hidden="true"></span>
-      <svg class="hud" viewBox="0 0 120 120" aria-hidden="true">
-        <circle class="r1" cx="60" cy="60" r="56"/>
-        <circle class="r2" cx="60" cy="60" r="44"/>
-        <circle class="r3" cx="60" cy="60" r="32"/>
-        <g class="ic" transform="translate(42 42) scale(1.5)"><path d="M4 5h16v14H4z"/><path d="M8 2v6M16 2v6M7 12h3M14 12h3M7 16h3"/></g>
-      </svg>
-      <h2>Shop &amp; Wunsch-Bestellung</h2>
-      <p>Bestelle feste Shop-Produkte oder ergänze eigene Wunschgegenstände.</p>
-      <span class="cta">Bestellung erstellen <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-    </a>
-  </div>
-</main>
-
-<script src="/bg.js"></script>
+  <script src="/bg.js"></script>
 </body>
 </html>
