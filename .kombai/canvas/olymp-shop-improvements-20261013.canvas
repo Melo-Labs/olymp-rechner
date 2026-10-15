@@ -42,7 +42,9 @@
       "created": "2026-10-13T13:53:40.685918+00:00",
       "modified": "2026-10-13T13:56:42.467323+00:00",
       "id": "var_3b1fee700b46",
-      "contentHeight": 1936
+      "contentHeight": 1936,
+      "viewportAuto": false,
+      "viewportScrollY": 0
     },
     "var_6609ae8f0696": {
       "type": "variant",
