@@ -70,5 +70,50 @@
     "category": "Verbrauchsgegenstände",
     "available": true,
     "active": true
+  },
+  {
+    "id": "19c89e31-7e3b-4c84-b6a1-1f2aa534c602",
+    "name": "5.56 Muni (300 Schuss)",
+    "price": 2000,
+    "image": "/img/5.56.png",
+    "category": "Munition",
+    "available": true,
+    "active": true
+  },
+  {
+    "id": "5f607afd-5f6c-46d0-9449-f635e97581d7",
+    "name": "9mm Muni (180 Schuss)",
+    "price": 1100,
+    "image": "/img/9mm.png",
+    "category": "Munition",
+    "available": true,
+    "active": true
+  },
+  {
+    "id": "d31e4ac5-a1f6-47d5-b2db-b8057110370e",
+    "name": ".308 Muni (90 Schuss)",
+    "price": 2000,
+    "image": "/img/308.png",
+    "category": "Munition",
+    "available": true,
+    "active": true
+  },
+  {
+    "id": "098e98a7-a9b2-4451-9a6c-81e5682cfb20",
+    "name": "12 Kaliber Muni (80 Schuss)",
+    "price": 1400,
+    "image": "/img/12kaliber.png",
+    "category": "Munition",
+    "available": true,
+    "active": true
+  },
+  {
+    "id": "b32c8965-8390-4df4-9c0e-dc5118933c62",
+    "name": "Schneidbrenner",
+    "price": 12500,
+    "image": "/img/schneidbrenner.png",
+    "category": "Verbrauchsgegenstände",
+    "available": true,
+    "active": true
   }
 ]

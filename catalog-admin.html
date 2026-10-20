@@ -47,14 +47,16 @@
       <a class="back" href="/freie-bestellung.html">← Zum Shop</a>
     </div>
     <h1>Produktverwaltung</h1>
-    <p class="lead">Hier pflegst du feste Shop-Produkte und deren verbindliche Preise. Deaktivierte Produkte bleiben im Adminbereich erhalten, werden Kunden aber nicht angezeigt.</p>
+    <p class="lead">Lege feste Shop-Produkte an und verwalte Namen, Bilder, Kategorien, Preise und Verfügbarkeit. Deaktivierte Produkte bleiben im Admin erhalten, erscheinen aber nicht im Shop.</p>
     <section class="panel">
       <div id="products" class="product-list" aria-live="polite">Produkte werden geladen …</div>
+      <p class="hint">Neues Produkt: auf „+ Produkt hinzufügen“ klicken, Angaben ausfüllen und mit „Katalog dauerhaft speichern“ sichern. Gespeicherte, aktive und verfügbare Produkte erscheinen unmittelbar im Shop.</p>
       <div class="actions">
         <button id="add-product" type="button">+ Produkt hinzufügen</button>
-        <button id="save-products" class="save" type="button">Änderungen speichern</button>
+        <button id="save-products" class="save" type="button">Katalog dauerhaft speichern</button>
       </div>
       <p id="status" class="status" aria-live="polite"></p>
+      <p class="hint">Der Katalog wird auf dem Server in <code>data/shop-products.json</code> gespeichert. Für Beständigkeit über Neustarts oder Deployments hinweg muss das Datenverzeichnis auf persistentem Speicher liegen.</p>
       <p class="hint">Kunden können zusätzlich eigene Gegenstände mit Preisvorschlag in den Warenkorb legen. Nur dieser Wunschpreis ist verhandelbar.</p>
     </section>
   </main>

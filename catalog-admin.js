@@ -201,7 +201,7 @@ document.getElementById('add-product').addEventListener('click', () => {
   const id = globalThis.crypto?.randomUUID?.() ?? `product-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   products.push({ id, name: '', price: '', image: '', category: 'Allgemein', available: true, active: true });
   renderProducts();
-  productsContainer.lastElementChild.querySelector('input[type="text"]').focus();
+  productsContainer.lastElementChild.querySelector('.name-field input').focus();
 });
 
 document.getElementById('save-products').addEventListener('click', async () => {
@@ -248,11 +248,11 @@ document.getElementById('save-products').addEventListener('click', async () => {
     products = result.products;
     renderProducts();
     if (result.auditLogged === false) {
-      showStatus(result.warning || 'Produkte wurden gespeichert, aber das Discord-Audit konnte nicht gesendet werden.', 'error');
+      showStatus(result.warning || 'Katalog dauerhaft gespeichert, aber das Discord-Audit konnte nicht gesendet werden.', 'error');
     } else if (result.auditChangeCount === 0) {
-      showStatus('Katalog gespeichert; es gab keine Änderungen zu protokollieren.', 'success');
+      showStatus('Katalog dauerhaft gespeichert; es gab keine Änderungen zu protokollieren.', 'success');
     } else {
-      showStatus('Produkte gespeichert und Änderungen im Discord-Audit protokolliert.', 'success');
+      showStatus('Katalog dauerhaft gespeichert und Änderungen im Discord-Audit protokolliert.', 'success');
     }
   } catch (error) {
     showStatus(error.message || 'Speichern fehlgeschlagen.', 'error');
