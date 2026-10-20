@@ -18,7 +18,8 @@ const noResultsPanel = document.getElementById('no-results-panel');
 const noResultsQuery = document.getElementById('no-results-query');
 const noResultsCopy = document.getElementById('no-results-copy');
 const noResultsWishButton = document.getElementById('no-results-wish');
-const weeklyBundleSection = document.getElementById('weekly-offers');
+const weeklyOfferUpcoming = document.getElementById('weekly-offer-upcoming');
+const weeklyBundleSection = document.getElementById('weekly-bundle');
 const weeklyBundleAddButton = document.getElementById('weekly-bundle-add');
 const weeklyBundlePrice = document.getElementById('weekly-bundle-price');
 const cartContainer = document.getElementById('custom-items');
@@ -220,8 +221,11 @@ function renderProducts() {
     ? `${visibleProducts.length} ${visibleProducts.length === 1 ? 'Treffer' : 'Treffer'}${categoryLabel}`
     : `${visibleProducts.length} Artikel · ${sortLabels[sortSelect.value]}${categoryLabel}`;
 
-  const showBundle = Boolean(weeklyBundle) && !query;
+  const showOfferArea = !query;
+  const showBundle = showOfferArea && Boolean(weeklyBundle);
+  weeklyOfferUpcoming.hidden = !showOfferArea || showBundle;
   weeklyBundleSection.hidden = !showBundle;
+
   if (!visibleProducts.length) {
     const empty = document.createElement('p');
     empty.className = 'no-products';
@@ -448,12 +452,13 @@ function renderWishlist() {
 }
 
 function renderWeeklyBundle() {
-  if (!weeklyBundle) {
-    weeklyBundleAddButton.disabled = true;
-    return;
-  }
+  const hasOffer = Boolean(weeklyBundle);
+  weeklyOfferUpcoming.hidden = hasOffer;
+  weeklyBundleSection.hidden = !hasOffer;
+  weeklyBundleAddButton.disabled = !hasOffer;
+  if (!hasOffer) return;
+
   weeklyBundlePrice.textContent = formatPrice(weeklyBundle.price);
-  weeklyBundleAddButton.disabled = false;
   weeklyBundleAddButton.onclick = () => addToCart({
     type: 'weeklyOffer',
     weeklyOfferId: weeklyBundle.id,
@@ -747,7 +752,6 @@ function loadProducts() {
   productsContainer.append(loading);
   catalogStatus.textContent = 'Produkte werden geladen …';
   resultCount.textContent = 'Katalog wird geladen …';
-  weeklyBundleAddButton.disabled = true;
 
   return fetch('/api/shop/products')
     .then(async response => {
@@ -780,8 +784,8 @@ function loadProducts() {
       productsContainer.append(errorPanel);
       catalogStatus.textContent = 'Katalog nicht verfügbar';
       resultCount.textContent = 'Produkte konnten nicht geladen werden';
-      weeklyBundleSection.hidden = true;
-      weeklyBundleAddButton.disabled = true;
+      weeklyBundle = null;
+      renderWeeklyBundle();
       renderAds([]);
     });
 }

@@ -40,11 +40,8 @@ const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
 const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
 const BUYBACK_PRODUCTS_FILE = path.join(ROOT, "data", "buyback-products.json");
-const WEEKLY_BUNDLE = {
-  id: "wochenangebot-bundle",
-  name: "Wochenangebot (Aktionspaket)",
-  price: 200000
-};
+// Set to { id, name, price } to publish the next shop bundle.
+const WEEKLY_BUNDLE = null;
 const SHOP_CONTENT = {
   weeklyOffers: [],
   ads: [
@@ -1694,7 +1691,7 @@ async function handleCustomOrder(req, res) {
       name = product.name;
       pricePerItem = getShopPromotion(product)?.price ?? product.price;
     } else if (type === "weeklyOffer") {
-      if (entry?.weeklyOfferId !== WEEKLY_BUNDLE.id) {
+      if (!WEEKLY_BUNDLE || entry?.weeklyOfferId !== WEEKLY_BUNDLE.id) {
         send(res, 400, JSON.stringify({ ok: false, message: "Das Wochenangebot ist nicht mehr verfügbar." }), "application/json; charset=utf-8");
         return;
       }

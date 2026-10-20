@@ -141,6 +141,10 @@
     .main-column { display: grid; min-width: 0; gap: 22px; }
     .side-rail { position: sticky; top: 132px; display: grid; min-width: 0; gap: 13px; }
 
+    .weekly-offers { scroll-margin-top: 132px; }
+    .weekly-offer-upcoming { padding: 16px 18px; border: 1px solid var(--shop-line); background: rgba(255, 255, 255, .018); }
+    .weekly-offer-upcoming h2 { margin: 0; color: var(--shop-text); font: 700 15px/1.35 var(--shop-display); }
+    .weekly-offer-upcoming p { margin: 5px 0 0; color: var(--shop-muted); font-size: 12px; }
     .bundle { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(310px, .92fr); min-height: 250px; overflow: hidden; border: 1px solid rgba(142, 198, 232, .2); border-radius: 5px; background: linear-gradient(130deg, #0c151d, #101923 65%, #0b1117); }
     .bundle-image { min-width: 0; min-height: 100%; overflow: hidden; background: #071019; }
     .bundle-image img { display: block; width: 100%; height: 100%; min-height: 250px; object-fit: cover; }
@@ -399,7 +403,7 @@
         </div>
         <nav class="shop-nav" aria-label="Shop-Bereiche">
           <a href="#shop-catalog" aria-current="page">Katalog</a>
-          <a href="#weekly-offers">Wochenangebot</a>
+          <a href="#weekly-offers">Wochenangebote</a>
           <a href="#wish-item">Wunschartikel</a>
           <span class="nav-note">OLYMP · Ingame Versorgung</span>
         </nav>
@@ -411,7 +415,7 @@
         <div>
           <span class="eyebrow">OLYMP PROVISIONS / KATALOG</span>
           <h1>Shop</h1>
-          <p class="page-subtitle">Ausrüstung, Verbrauchsgüter und Wochenangebote.</p>
+          <p class="page-subtitle">Ausrüstung, Verbrauchsgüter und Bestellungen.</p>
         </div>
         <div class="catalog-status" aria-live="polite">
           <span class="status-dot" aria-hidden="true"></span>
@@ -421,25 +425,31 @@
 
       <div class="shop-layout">
         <div class="main-column">
-          <section id="weekly-offers" class="bundle" aria-labelledby="bundle-title">
-            <div class="bundle-image">
-              <img src="/img/wochenangebot.png" alt="OLYMP Wochenangebot mit Westen, Revolvern, Karabinern, Medkits, Kabelbindern und Munition" fetchpriority="high">
+          <section id="weekly-offers" class="weekly-offers" aria-label="Wochenangebote">
+            <div id="weekly-offer-upcoming" class="weekly-offer-upcoming" hidden>
+              <h2>Bald wieder Wochenangebote</h2>
+              <p>Neue Aktionspakete folgen hier.</p>
             </div>
-            <div class="bundle-copy">
-              <span class="bundle-label">Aktuelles Wochenangebot</span>
-              <h2 id="bundle-title">Versorgungspaket</h2>
-              <p class="bundle-intro">Einmal alles Wichtige – direkt im Paket.</p>
-              <ul class="bundle-contents">
-                <li>10× Weste · 2× Revolver</li>
-                <li>2× Karabiner · 10× Medkit</li>
-                <li>16× Kabelbinder</li>
-                <li>4× ACP- &amp; 4× 5.56-Muni</li>
-              </ul>
-              <div class="bundle-buy">
-                <strong class="bundle-price"><small>Festpreis</small><span id="weekly-bundle-price">200.000 $</span></strong>
-                <button id="weekly-bundle-add" class="btn-gold" type="button">Paket in den Warenkorb <span class="button-arrow" aria-hidden="true">→</span></button>
+            <section id="weekly-bundle" class="bundle" aria-labelledby="bundle-title" hidden>
+              <div class="bundle-image">
+                <img src="/img/wochenangebot.png" alt="OLYMP Wochenangebot mit Westen, Revolvern, Karabinern, Medkits, Kabelbindern und Munition" fetchpriority="high">
               </div>
-            </div>
+              <div class="bundle-copy">
+                <span class="bundle-label">Aktuelles Wochenangebot</span>
+                <h2 id="bundle-title">Versorgungspaket</h2>
+                <p class="bundle-intro">Einmal alles Wichtige – direkt im Paket.</p>
+                <ul class="bundle-contents">
+                  <li>10× Weste · 2× Revolver</li>
+                  <li>2× Karabiner · 10× Medkit</li>
+                  <li>16× Kabelbinder</li>
+                  <li>4× ACP- &amp; 4× 5.56-Muni</li>
+                </ul>
+                <div class="bundle-buy">
+                  <strong class="bundle-price"><small>Festpreis</small><span id="weekly-bundle-price">0 $</span></strong>
+                  <button id="weekly-bundle-add" class="btn-gold" type="button">Paket in den Warenkorb <span class="button-arrow" aria-hidden="true">→</span></button>
+                </div>
+              </div>
+            </section>
           </section>
 
           <section id="shop-catalog" class="catalog-section" aria-labelledby="catalog-title">
