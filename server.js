@@ -760,7 +760,7 @@ function normalizeShopProduct(product, fallbackId = crypto.randomUUID()) {
     price,
     image,
     category,
-    available: Boolean(available) && active,
+    available: Boolean(available),
     active
   };
 }
@@ -864,7 +864,7 @@ function validateShopProducts(value) {
       price,
       image,
       category,
-      available: available && product.active,
+      available,
       active: product.active
     });
   }
