@@ -50,7 +50,7 @@
     "price": 42500,
     "image": "/img/carabiner.png",
     "category": "Waffen",
-    "available": true,
+    "available": false,
     "active": true
   },
   {
