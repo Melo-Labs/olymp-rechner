@@ -25,27 +25,27 @@
     "price": 1815
   },
   {
-    "id": "Papier I",
+    "id": "papier-1",
     "name": "Papier I",
     "price": 250
   },
   {
-    "id": "Papier II",
+    "id": "papier-2",
     "name": "Papier II",
     "price": 550
   },
   {
-    "id": "Farbe I ",
-    "name": "Farbe I ",
+    "id": "farbe-1",
+    "name": "Farbe I",
     "price": 330
   },
   {
-    "id": "Farbe II",
+    "id": "farbe-2",
     "name": "Farbe II",
     "price": 870
   },
   {
-    "id": "Farbe III",
+    "id": "farbe-3",
     "name": "Farbe III",
     "price": 2200
   },
