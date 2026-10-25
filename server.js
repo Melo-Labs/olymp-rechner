@@ -2110,6 +2110,14 @@ function startDiscordWelcomeBot() {
   client.on(Events.InteractionCreate, interaction => {
     handleGatewayOrderInteraction(interaction).catch(error => {
       console.error("Discord-Button-Interaktion fehlgeschlagen:", error.message);
+      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+        interaction.reply({
+          content: "Der Bot konnte diese Bestellaktion nicht verarbeiten. Bitte die Bestellübersicht öffnen oder den Server-Admin informieren.",
+          ephemeral: true
+        }).catch(replyError => {
+          console.error("Discord-Fehlerantwort konnte nicht gesendet werden:", replyError.message);
+        });
+      }
     });
   });
   client.on(Events.GuildMemberAdd, async member => {
