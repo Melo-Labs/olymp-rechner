@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bestellverwaltung</title>
   <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/admin/nav.css">
   <style>
     :root{--bg:#0b0d10;--line:rgba(142,198,232,.18);--mut:#b4bec8;--text:#edf3fb;--ok:#72d9b1;--bad:#ff8f8f;--accent:#8ec6e8;--tx:var(--text);--ac:var(--accent)}
     *{box-sizing:border-box}
@@ -41,9 +42,8 @@
 <body>
   <main>
     <div class="topbar">
-      <strong>OLYMP · SHOP ADMIN</strong>
-      <a href="/admin/catalog">Shop-Produkte</a>
-      <a href="/admin/buyback">Ankauf-Produkte</a>
+      <span class="admin-menu-slot" aria-hidden="true"></span><strong>OLYMP · SHOP ADMIN</strong>
+      <span class="admin-menu-hint">Menü links öffnen</span>
       <a class="back" href="/freie-bestellung.html">← Zum Shop</a>
     </div>
     <h1>Bestellverwaltung</h1>
@@ -70,6 +70,6 @@
       <p class="hint">Die Übersicht liegt in <code>data/admin-orders.json</code>. Bei flüchtigem Serverspeicher muss ein persistentes Volume eingebunden sein.</p>
     </section>
   </main>
-  <script src="/admin/orders.js"></script>
+  <script src="/admin/orders.js"></script><script src="/admin/nav.js"></script>
 </body>
 </html>

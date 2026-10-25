@@ -104,6 +104,8 @@ const staticFiles = new Map([
   ["/admin/catalog.js", "catalog-admin.js"],
   ["/admin/buyback", "buyback-admin.html"],
   ["/admin/buyback.js", "buyback-admin.js"],
+  ["/admin/nav.css", "admin-nav.css"],
+  ["/admin/nav.js", "admin-nav.js"],
   ["/admin/orders", "orders-admin.html"],
   ["/admin/orders.js", "orders-admin.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
