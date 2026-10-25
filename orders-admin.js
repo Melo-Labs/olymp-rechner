@@ -1,6 +1,12 @@
 const ordersContainer = document.getElementById('orders');
 const statusMessage = document.getElementById('status-message');
 const statusFilter = document.getElementById('status-filter');
+const typeFilter = document.getElementById('type-filter');
+const searchInput = document.getElementById('search-orders');
+const statTotal = document.getElementById('stat-total');
+const statNew = document.getElementById('stat-new');
+const statOpen = document.getElementById('stat-open');
+const statValue = document.getElementById('stat-value');
 const statuses = [
   { value: 'new', label: 'Neu' },
   { value: 'accepted', label: 'Angenommen' },
@@ -40,7 +46,14 @@ function dateLabel(value) {
 }
 
 function renderOrders() {
-  const visibleOrders = orders.filter(order => !statusFilter.value || order.status === statusFilter.value);
+  const query = searchInput.value.trim().toLocaleLowerCase('de-DE');
+  const visibleOrders = orders.filter(order => {
+    if (statusFilter.value && order.status !== statusFilter.value) return false;
+    if (typeFilter.value && order.type !== typeFilter.value) return false;
+    if (!query) return true;
+    const searchable = [order.icName, order.customerName, order.phone, order.type, order.status, order.message, ...(order.items || []).map(item => item.name)].join(' ').toLocaleLowerCase('de-DE');
+    return searchable.includes(query);
+  });
   ordersContainer.replaceChildren();
   if (!visibleOrders.length) {
     const empty = document.createElement('p');
@@ -106,12 +119,22 @@ async function loadOrders() {
       throw new Error(result.message || 'Bestellungen konnten nicht geladen werden.');
     }
     orders = result.orders;
+    updateStats();
     renderOrders();
     showStatus(`${orders.length} Bestellung(en) geladen.`, 'success');
   } catch (error) {
     ordersContainer.textContent = '';
     showStatus(error.message || 'Bestellungen konnten nicht geladen werden.', 'error');
   }
+}
+
+function updateStats() {
+  const open = orders.filter(order => !['Angenommen', 'Abgelehnt', 'Erledigt'].includes(order.status));
+  const total = orders.reduce((sum, order) => sum + Number(order.totalPrice || 0), 0);
+  statTotal.textContent = orders.length.toLocaleString('de-DE');
+  statNew.textContent = orders.filter(order => order.status === 'Neu').length.toLocaleString('de-DE');
+  statOpen.textContent = open.length.toLocaleString('de-DE');
+  statValue.textContent = `${total.toLocaleString('de-DE')} $`;
 }
 
 async function updateStatus(order, status, button) {
@@ -136,5 +159,7 @@ async function updateStatus(order, status, button) {
 }
 
 statusFilter.addEventListener('change', renderOrders);
+typeFilter.addEventListener('change', renderOrders);
+searchInput.addEventListener('input', renderOrders);
 document.getElementById('refresh-orders').addEventListener('click', loadOrders);
 loadOrders();

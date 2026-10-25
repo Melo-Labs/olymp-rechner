@@ -16,7 +16,7 @@
     h1{margin:0 0 8px;font-size:clamp(1.8rem,5vw,3rem)}
     .lead,.hint{color:var(--mut);line-height:1.6}
     .panel,.order{padding:20px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(21,25,29,.96),rgba(10,12,14,.96));box-shadow:0 28px 34px -28px rgba(0,0,0,.9)}
-    .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+    .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}.toolbar input{min-width:240px;flex:1 1 260px}.toolbar label{color:var(--mut)}
     select,button{min-height:42px;padding:9px 12px;border:1px solid rgba(142,198,232,.22);border-radius:9px;background:#101418;color:var(--tx);font:inherit}
     button{font-weight:700;cursor:pointer}
     button:hover{border-color:var(--ac)}
@@ -33,20 +33,26 @@
     .status-message{min-height:24px;margin:12px 0 0}
     .status-message.error{color:var(--bad)}.status-message.success{color:var(--ok)}
     .empty{color:var(--mut);padding:18px 4px}
-    @media(max-width:520px){main{padding-top:22px}.panel{padding:14px}.order{padding:14px}.actions button{flex:1 1 42%}}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 18px}.stat{padding:14px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.025)}.stat strong{display:block;font-size:1.5rem}.stat span{color:var(--mut);font-size:.82rem}
+    @media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:520px){main{padding-top:22px}.panel{padding:14px}.order{padding:14px}.actions button{flex:1 1 42%}.stats{gap:8px}.stat{padding:10px}.stat strong{font-size:1.25rem}}
   </style>
 </head>
 <body>
   <main>
     <div class="topbar">
       <strong>OLYMP · SHOP ADMIN</strong>
-      <a href="/admin/catalog">Produktverwaltung</a>
+      <a href="/admin/catalog">Shop-Produkte</a>
+      <a href="/admin/buyback">Ankauf-Produkte</a>
       <a class="back" href="/freie-bestellung.html">← Zum Shop</a>
     </div>
     <h1>Bestellverwaltung</h1>
-    <p class="lead">Material-, STANK- und Wunschbestellungen dauerhaft einsehen und ihren Bearbeitungsstatus aktualisieren.</p>
+    <p class="lead">Alle Shop-, Ankauf- und Wunschbestellungen an einem Ort. Suche nach Namen oder Telefonnummer und aktualisiere den Status direkt hier.</p>
     <section class="panel">
+      <div class="stats"><div class="stat"><strong id="stat-total">–</strong><span>Gesamt</span></div><div class="stat"><strong id="stat-new">–</strong><span>Neu</span></div><div class="stat"><strong id="stat-open">–</strong><span>Offen</span></div><div class="stat"><strong id="stat-value">–</strong><span>Bestellwert</span></div></div>
       <div class="toolbar">
+        <label for="search-orders">Suchen:</label>
+        <input id="search-orders" type="search" placeholder="Name, Telefon oder Inhalt …">
         <label for="status-filter">Status anzeigen:</label>
         <select id="status-filter">
           <option value="">Alle Status</option>
@@ -56,6 +62,7 @@
           <option>Erledigt</option>
           <option>Abgelehnt</option>
         </select>
+        <select id="type-filter" aria-label="Bestellart anzeigen"><option value="">Alle Arten</option><option value="material">Material</option><option value="stank">STANK</option><option value="custom">Wunsch-Bestellung</option><option value="sell-offer">Ankauf-Angebot</option></select>
         <button id="refresh-orders" type="button">Aktualisieren</button>
       </div>
       <div id="orders" class="order-list" aria-live="polite">Bestellungen werden geladen …</div>

@@ -770,12 +770,21 @@ function validateBuybackProducts(value) {
   const products = [];
   const ids = new Set();
   for (const entry of value) {
-    const id = String(entry?.id || "").trim();
     const name = String(entry?.name || "").trim();
     const price = Number(entry?.price);
-    if (!/^[a-z0-9-]{1,80}$/.test(id) || !name || name.length > 80
-      || !Number.isSafeInteger(price) || price < 1 || price > 1000000000 || ids.has(id)) {
-      return { error: "Produktdaten ungültig: ID, Name und Preis prüfen." };
+    let id = String(entry?.id || "").trim();
+    if (!name || name.length > 80 || !Number.isSafeInteger(price) || price < 1 || price > 1000000000) {
+      return { error: "Produktdaten ungültig: Name und Preis prüfen." };
+    }
+    if (!id) {
+      const base = name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "produkt";
+      id = base;
+      let suffix = 2;
+      while (ids.has(id)) id = `${base}-${suffix++}`;
+    }
+    if (!/^[a-z0-9-]{1,80}$/.test(id) || ids.has(id)) {
+      return { error: "Produktdaten ungültig: Produktnamen dürfen nicht doppelt sein." };
     }
     ids.add(id);
     products.push({ id, name, price });
@@ -1261,6 +1270,64 @@ async function postToDiscordChannel(orderMessage, channelId = ORDER_CHANNEL_ID, 
   }
 
   return { method: "local-only" };
+}
+
+async function handleGatewayOrderInteraction(interaction) {
+  if (!interaction.isButton()) return;
+
+  const action = parseButtonAction(interaction.customId);
+  if (action.kind === "unknown") return;
+
+  const config = discordConfig();
+  const roleIds = interaction.member?.roles?.cache
+    ? [...interaction.member.roles.cache.keys()]
+    : [];
+  if (!memberCanManageOrders(interaction.guildId, roleIds, config)) {
+    await interaction.reply({
+      content: "Du hast keine Berechtigung, den Bestellstatus zu ändern.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (action.kind === "contact") {
+    await interaction.reply({
+      content: contactReply(action.orderId, interaction.message?.embeds?.[0]),
+      ephemeral: true
+    });
+    return;
+  }
+
+  // Discord erwartet die erste Antwort innerhalb weniger Sekunden. Das sofortige
+  // deferUpdate verhindert den „hat nicht rechtzeitig reagiert“-Fehler, während
+  // Datei- und Discord-Updates im Hintergrund verarbeitet werden.
+  await interaction.deferUpdate();
+  try {
+    const payload = {
+      message: interaction.message,
+      channel_id: interaction.channelId
+    };
+    const order = applyDiscordOrderStatus(
+      action.orderId,
+      action.statusKey,
+      actorNameFromMember(interaction.member),
+      String(interaction.message?.id || ""),
+      payload
+    );
+    await interaction.editReply(interactionMessageData(order));
+  } catch (error) {
+    console.error("Discord-Button-Interaktion konnte nicht verarbeitet werden:", error.message);
+    try {
+      await interaction.followUp({
+        content: error.code === "NOT_FOUND"
+          ? "Diese Bestellnachricht ist nicht mehr verfügbar."
+          : "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.",
+        ephemeral: true
+      });
+    } catch (followupError) {
+      console.error("Discord-Fehlernachricht konnte nicht gesendet werden:", followupError.message);
+    }
+  }
 }
 
 async function handleMaterialOrder(req, res) {
