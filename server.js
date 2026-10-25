@@ -6,6 +6,18 @@ const http = require("node:http");
 const path = require("node:path");
 const { verifyKey } = require("discord-interactions");
 const { AttachmentBuilder, Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js");
+const {
+  ORDER_STATUS_LABELS,
+  isAdminOrderClosed,
+  displayAdminOrderStatus,
+  buildAdminOrderDiscordPayload,
+  buildMaterialOrderPayload,
+  buildStankOrderPayload,
+  buildCustomOrderPayload,
+  buildSellOfferPayload,
+  parseButtonAction,
+  phoneFromEmbed
+} = require("./discord-order-ui");
 
 function loadEnvFile() {
   const file = path.join(__dirname, ".env");
@@ -76,6 +88,7 @@ const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
 let catalogAuditInProgress = false;
+let adminOrdersCache = null;
 const staticFiles = new Map([
   ["/", "landing.html"],
   ["/index.html", "landing.html"],
@@ -172,6 +185,10 @@ function send(res, status, body, contentType = "text/plain; charset=utf-8") {
   applySecurityHeaders(res);
   res.writeHead(status, { "Content-Type": contentType, "Cache-Control": "no-store" });
   res.end(body);
+}
+
+function sendJson(res, status, value) {
+  send(res, status, JSON.stringify(value), "application/json; charset=utf-8");
 }
 
 function redirect(res, location) {
@@ -489,15 +506,8 @@ function saveMaterialOrderLocally(order) {
   return saveOrderLocally(order, "material-bestellungen.json");
 }
 
-const ORDER_STATUS_LABELS = {
-  new: "Neu",
-  accepted: "Angenommen",
-  processing: "In Bearbeitung",
-  completed: "Erledigt",
-  rejected: "Abgelehnt"
-};
-
 function readAdminOrders() {
+  if (adminOrdersCache) return adminOrdersCache;
   const orders = JSON.parse(fs.readFileSync(ADMIN_ORDERS_FILE, "utf8"));
   if (!Array.isArray(orders)) throw new Error("Admin-Bestelldatei enthält keine Bestellliste.");
   for (const order of orders) {
@@ -505,10 +515,12 @@ function readAdminOrders() {
       order.type = "material";
     }
   }
+  adminOrdersCache = orders;
   return orders;
 }
 
 function writeAdminOrders(orders) {
+  adminOrdersCache = orders;
   writeAccountingJson(ADMIN_ORDERS_FILE, orders);
 }
 
@@ -532,49 +544,6 @@ function updateAdminOrder(orderId, updates) {
   orders[index] = { ...orders[index], ...updates };
   writeAdminOrders(orders);
   return orders[index];
-}
-
-function isAdminOrderClosed(order) {
-  return order.status === "Angenommen" || order.status === "Abgelehnt";
-}
-
-function displayAdminOrderStatus(order) {
-  return isAdminOrderClosed(order) ? `${order.status} · Abgeschlossen` : order.status || "Neu";
-}
-
-function buildOrderComponents(order) {
-  if (isAdminOrderClosed(order)) return [];
-  const controls = Object.entries(ORDER_STATUS_LABELS).filter(([value]) => value !== "new").map(([value, label]) => ({
-    type: 2,
-    style: value === "completed" ? 3 : value === "rejected" ? 4 : 2,
-    label,
-    custom_id: `order_status:${order.id}:${value}`,
-    disabled: order.status === label
-  }));
-  return [
-    { type: 1, components: controls },
-    {
-      type: 1,
-      components: [{
-        type: 2,
-        style: 2,
-        label: "Kontaktaufnahme",
-        custom_id: `${order.type}_order_contact`
-      }]
-    }
-  ];
-}
-
-function buildAdminOrderDiscordPayload(order) {
-  const builders = {
-    material: buildMaterialOrderPayload,
-    stank: buildStankOrderPayload,
-    custom: buildCustomOrderPayload,
-    "sell-offer": buildSellOfferPayload
-  };
-  const builder = builders[order.type];
-  if (!builder) throw new Error(`Unbekannter Bestelltyp: ${order.type}`);
-  return builder(order);
 }
 
 function recordOrderDelivery(order, deliveryStatus, discordMessage = {}, deliveryError = "") {
@@ -975,104 +944,6 @@ const catalogAuditRetryTimer = setInterval(() => {
 }, 60 * 1000);
 catalogAuditRetryTimer.unref();
 
-function buildStankOrderPayload(order) {
-  return {
-    content: "🌿 Neue STANK-Bestellung",
-    embeds: [{
-      title: "Neue STANK-Bestellung",
-      description: "Eine neue Bestellung von STANK-Pflanzen wurde erfasst.",
-      color: 0x70ad5b,
-      fields: [
-        { name: "IC-Name", value: order.icName, inline: true },
-        { name: "Handynummer / IC", value: order.phone, inline: true },
-        { name: "STANK-Pflanzen", value: `${order.quantity}`, inline: true },
-        { name: "Preis pro Pflanze", value: "2.000 $", inline: true },
-        { name: "Gesamtpreis", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
-        { name: "Status", value: displayAdminOrderStatus(order), inline: true }
-      ],
-      footer: { text: "Olymp Rechner • STANK-Kauf" },
-      timestamp: order.createdAt || new Date().toISOString()
-    }],
-    components: buildOrderComponents(order),
-    allowed_mentions: { parse: [] }
-  };
-}
-
-function buildCustomOrderPayload(order) {
-  const itemList = Array.isArray(order.items) && order.items.length
-    ? order.items.map((item, index) =>
-      `**${index + 1}. ${item.name}**${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $${item.type === "custom" ? " Preisvorschlag" : " Festpreis"} = ${item.totalPrice.toLocaleString("de-DE")} $`
-    ).join("\n")
-    : order.discordDescription || "Bestellpositionen";
-  return {
-    content: "🛒 Neue Wunsch-Bestellung",
-    embeds: [{
-      title: "Neue Wunsch-Bestellung",
-      description: itemList,
-      color: 0x5ba6cb,
-      fields: [
-        { name: "IC-Name", value: order.icName, inline: true },
-        { name: "Handynummer / IC", value: order.phone, inline: true },
-        { name: "Gesamtsumme", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
-        { name: "Status", value: displayAdminOrderStatus(order), inline: true }
-      ],
-      footer: { text: "Olymp Rechner • Wunsch-Bestellung" },
-      timestamp: order.createdAt || new Date().toISOString()
-    }],
-    components: buildOrderComponents(order),
-    allowed_mentions: { parse: [] }
-  };
-}
-
-function buildSellOfferPayload(order) {
-  const itemList = Array.isArray(order.items) && order.items.length ? order.items.map(item =>
-    `**${item.name}** — ${item.quantity} × ${item.pricePerItem.toLocaleString("de-DE")} $ = ${item.totalPrice.toLocaleString("de-DE")} $`
-  ).join("\n") : order.discordDescription || "Angebotspositionen";
-  return {
-    content: "💰 Neues Ankauf-Angebot",
-    embeds: [{
-      title: "Neues Ankauf-Angebot",
-      description: itemList,
-      color: 0xd7ad72,
-      fields: [
-        { name: "IC-Name", value: order.icName, inline: true },
-        { name: "Telefonnummer", value: order.phone, inline: true },
-        { name: "Gesamtsumme", value: `${order.totalPrice.toLocaleString("de-DE")} $`, inline: true },
-        { name: "Status", value: displayAdminOrderStatus(order), inline: true }
-      ],
-      footer: { text: "Olymp Rechner • Ankauf" },
-      timestamp: order.createdAt || new Date().toISOString()
-    }],
-    components: buildOrderComponents(order),
-    allowed_mentions: { parse: [] }
-  };
-}
-
-function buildMaterialOrderPayload(order) {
-  return {
-    content: "📦 Neue Material-Bestellung",
-    embeds: [{
-      title: "Neue Material-Bestellung",
-      description: "Eine neue Bestellung wurde im Rechner erfasst.",
-      color: 0x2ea6ff,
-      fields: [
-        { name: "IC-Name", value: order.icName || "—", inline: true },
-        { name: "Technische Materialien", value: `${order.technical}`, inline: true },
-        { name: "Medizinische Materialien", value: `${order.medical}`, inline: true },
-        { name: "Gesamtanzahl", value: `${order.totalMaterials}`, inline: true },
-        { name: "Handynummer", value: order.phone || "—", inline: true },
-        { name: "Gesamtpreis", value: `${order.totalPrice} $`, inline: true },
-        { name: "Status", value: displayAdminOrderStatus(order), inline: true },
-        { name: "Zeitstempel", value: `${new Date(order.createdAt || Date.now()).toLocaleString("de-DE")}`, inline: false }
-      ],
-      footer: { text: "Olymp Rechner • Material-Ankauf" },
-      timestamp: order.createdAt || new Date().toISOString()
-    }],
-    components: buildOrderComponents(order),
-    allowed_mentions: { parse: [] }
-  };
-}
-
 function recoverAdminOrderFromDiscordMessage(orderId, payload) {
   const message = payload.message;
   const embed = message?.embeds?.[0];
@@ -1089,7 +960,7 @@ function recoverAdminOrderFromDiscordMessage(orderId, payload) {
   const channelIds = [ORDER_CHANNEL_ID, STANK_ORDER_CHANNEL_ID, CUSTOM_ORDER_CHANNEL_ID, SELL_OFFER_CHANNEL_ID];
   if (!type || !channelIds.includes(String(payload.channel_id || "")) || !Array.isArray(embed.fields)) return null;
 
-  const fields = new Map(embed.fields.map(field => [String(field.name || ""), String(field.value || "")]));
+  const fields = new Map(embed.fields.map(field => [String(field.name || ""), String(field.value || "").replace(/\*\*/g, "")]));
   const parseAmount = value => {
     const amount = Number(String(value || "").replace(/[^\d-]/g, ""));
     return Number.isSafeInteger(amount) && amount >= 0 ? amount : 0;
@@ -1097,17 +968,18 @@ function recoverAdminOrderFromDiscordMessage(orderId, payload) {
   const createdAt = typeof embed.timestamp === "string" && !Number.isNaN(Date.parse(embed.timestamp))
     ? embed.timestamp
     : new Date().toISOString();
+  const statusValue = String(fields.get("Status") || "Neu").replace(" · Abgeschlossen", "").trim();
   return {
     id: orderId,
     type,
-    status: fields.get("Status") || "Neu",
-    icName: fields.get("IC-Name") || "Unbekannt",
-    phone: fields.get("Handynummer") || fields.get("Handynummer / IC") || fields.get("Telefonnummer") || "",
+    status: statusValue || "Neu",
+    icName: fields.get("Kunde") || fields.get("IC-Name") || "Unbekannt",
+    phone: phoneFromEmbed(embed) || fields.get("Telefon") || fields.get("Handynummer") || fields.get("Handynummer / IC") || fields.get("Telefonnummer") || "",
     totalPrice: parseAmount(fields.get("Gesamtsumme") || fields.get("Gesamtpreis")),
-    technical: parseAmount(fields.get("Technische Materialien")),
-    medical: parseAmount(fields.get("Medizinische Materialien")),
-    totalMaterials: parseAmount(fields.get("Gesamtanzahl")),
-    quantity: parseAmount(fields.get("STANK-Pflanzen")),
+    technical: parseAmount(fields.get("Technik") || fields.get("Technische Materialien")),
+    medical: parseAmount(fields.get("Medizin") || fields.get("Medizinische Materialien")),
+    totalMaterials: parseAmount(fields.get("Stück") || fields.get("Gesamtanzahl")),
+    quantity: parseAmount(fields.get("Pflanzen") || fields.get("STANK-Pflanzen")),
     items: [],
     discordDescription: String(embed.description || ""),
     createdAt,
@@ -1127,10 +999,139 @@ async function verifyDiscordInteraction(rawBody, signatureHex, timestamp, public
   }
 }
 
+function memberCanManageOrders(guildId, roleIds, config) {
+  return guildId === config.guildId
+    && /^\d{17,20}$/.test(config.catalogAdminRoleId)
+    && Array.isArray(roleIds)
+    && roleIds.includes(config.catalogAdminRoleId);
+}
+
+function actorNameFromMember(member) {
+  return String(member?.user?.global_name || member?.nick || member?.user?.username || "Discord-Admin").slice(0, 80);
+}
+
+function findOrderForButton(orderId, messageId) {
+  const orders = readAdminOrders();
+  let order = orders.find(entry => entry.id === orderId && entry.discordMessageId === messageId)
+    || orders.find(entry => entry.id === orderId)
+    || orders.find(entry => entry.discordMessageId === messageId);
+  if (order && order.id !== orderId) {
+    console.warn(`Discord-Bestellbutton ${orderId} wurde über Nachrichten-ID ${messageId} zugeordnet.`);
+  }
+  return { orders, order };
+}
+
+function applyDiscordOrderStatus(orderId, statusKey, actorName, messageId, payload) {
+  const { orders, order: existing } = findOrderForButton(orderId, messageId);
+  let order = existing;
+  if (!order) {
+    order = recoverAdminOrderFromDiscordMessage(orderId, payload);
+    if (order) {
+      orders.push(order);
+      writeAdminOrders(orders);
+      console.warn(`Bestellung ${orderId} wurde aus der Discord-Nachricht wiederhergestellt.`);
+    }
+  }
+  if (!order) {
+    const error = new Error("order-not-found");
+    error.code = "NOT_FOUND";
+    throw error;
+  }
+  if (isAdminOrderClosed(order)) return order;
+
+  const updated = updateAdminOrder(order.id, {
+    status: ORDER_STATUS_LABELS[statusKey],
+    updatedAt: new Date().toISOString(),
+    updatedBy: actorName
+  });
+  if (!updated) {
+    const error = new Error("order-not-found");
+    error.code = "NOT_FOUND";
+    throw error;
+  }
+  return updated;
+}
+
+function contactReply(orderId, embed) {
+  let phone = phoneFromEmbed(embed);
+  if (!phone && orderId) {
+    try {
+      const order = readAdminOrders().find(entry => entry.id === orderId);
+      phone = String(order?.phone || "").trim();
+    } catch (error) {
+      console.error("Telefonnummer konnte nicht gelesen werden:", error.message);
+    }
+  }
+  return phone
+    ? `📞 Kontakt: ${phone}`
+    : "Für diese Bestellung ist keine Telefonnummer hinterlegt.";
+}
+
+async function editOriginalInteraction(payload, data) {
+  const applicationId = payload.application_id;
+  const token = payload.token;
+  if (!applicationId || !token) throw new Error("Interaction-Token fehlt.");
+  const response = await discordFetch(
+    `https://discord.com/api/v10/webhooks/${encodeURIComponent(applicationId)}/${encodeURIComponent(token)}/messages/@original`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    }
+  );
+  if (!response.ok) {
+    const body = parseJson(await response.text());
+    throw new Error(body?.message || `Discord-Update fehlgeschlagen (${response.status}).`);
+  }
+}
+
+async function followupInteraction(payload, content) {
+  const applicationId = payload.application_id;
+  const token = payload.token;
+  if (!applicationId || !token) return;
+  try {
+    await discordFetch(
+      `https://discord.com/api/v10/webhooks/${encodeURIComponent(applicationId)}/${encodeURIComponent(token)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, flags: 64, allowed_mentions: { parse: [] } })
+      }
+    );
+  } catch (error) {
+    console.error("Discord-Followup fehlgeschlagen:", error.message);
+  }
+}
+
+function interactionMessageData(order) {
+  const message = buildAdminOrderDiscordPayload(order);
+  return {
+    content: message.content,
+    embeds: message.embeds,
+    components: message.components,
+    allowed_mentions: message.allowed_mentions
+  };
+}
+
+async function finishStatusButton(payload, orderId, statusKey, actorName) {
+  try {
+    const order = applyDiscordOrderStatus(orderId, statusKey, actorName, String(payload.message?.id || ""), payload);
+    await editOriginalInteraction(payload, interactionMessageData(order));
+  } catch (error) {
+    if (error.code === "NOT_FOUND") {
+      console.warn(`Discord-Bestellbutton ${orderId} konnte keiner gespeicherten Bestellung zugeordnet werden.`);
+      await followupInteraction(payload, "Diese Bestellnachricht ist nicht mehr verfügbar.");
+      return;
+    }
+    console.error("Bestellstatus konnte nicht gespeichert werden:", error.message);
+    await followupInteraction(payload, "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.");
+  }
+}
+
 async function handleDiscordInteraction(req, res) {
   const config = discordConfig();
   if (!config.publicKey) {
-    send(res, 503, JSON.stringify({ error: "Discord interaction endpoint not configured." }), "application/json; charset=utf-8");
+    sendJson(res, 503, { error: "Discord interaction endpoint not configured." });
     return;
   }
 
@@ -1138,14 +1139,14 @@ async function handleDiscordInteraction(req, res) {
   try {
     rawBody = await readRequestBody(req, 256 * 1024);
   } catch {
-    send(res, 413, JSON.stringify({ error: "Payload too large" }), "application/json; charset=utf-8");
+    sendJson(res, 413, { error: "Payload too large" });
     return;
   }
 
   const signature = req.headers["x-signature-ed25519"];
   const timestamp = req.headers["x-signature-timestamp"];
   if (!await verifyDiscordInteraction(rawBody, String(signature || ""), String(timestamp || ""), config.publicKey)) {
-    send(res, 401, JSON.stringify({ error: "Invalid request signature" }), "application/json; charset=utf-8");
+    sendJson(res, 401, { error: "Invalid request signature" });
     return;
   }
 
@@ -1153,156 +1154,46 @@ async function handleDiscordInteraction(req, res) {
   try {
     payload = JSON.parse(rawBody || "{}");
   } catch {
-    send(res, 400, JSON.stringify({ error: "Invalid interaction payload" }), "application/json; charset=utf-8");
+    sendJson(res, 400, { error: "Invalid interaction payload" });
     return;
   }
 
   if (payload.type === 1) {
-    send(res, 200, JSON.stringify({ type: 1 }), "application/json; charset=utf-8");
+    sendJson(res, 200, { type: 1 });
     return;
   }
 
   if (payload.type === 3 && payload.data?.component_type === 2) {
-    const action = payload.data.custom_id;
-    const statusAction = /^order_status:([a-f0-9-]{36}):(accepted|processing|completed|rejected)$/i.exec(action || "");
-    if (statusAction) {
-      const [, orderId, statusKey] = statusAction;
-      const authorized = payload.guild_id === config.guildId
-        && /^\d{17,20}$/.test(config.catalogAdminRoleId)
-        && Array.isArray(payload.member?.roles)
-        && payload.member.roles.includes(config.catalogAdminRoleId);
-      if (!authorized) {
-        send(res, 200, JSON.stringify({
+    const action = parseButtonAction(payload.data.custom_id);
+    if (action.kind === "status") {
+      if (!memberCanManageOrders(payload.guild_id, payload.member?.roles, config)) {
+        sendJson(res, 200, {
           type: 4,
           data: { content: "Du hast keine Berechtigung, den Bestellstatus zu ändern.", flags: 64 }
-        }), "application/json; charset=utf-8");
-        return;
-      }
-
-      let order;
-      try {
-        const orders = readAdminOrders();
-        const messageId = String(payload.message?.id || "");
-        order = orders.find(entry => entry.id === orderId && entry.discordMessageId === messageId)
-          || orders.find(entry => entry.discordMessageId === messageId);
-        if (order && order.id !== orderId) {
-          console.warn(`Discord-Bestellbutton ${orderId} wurde über Nachrichten-ID ${messageId} zugeordnet.`);
-        }
-        if (!order) {
-          order = recoverAdminOrderFromDiscordMessage(orderId, payload);
-          if (order) {
-            orders.push(order);
-            writeAdminOrders(orders);
-            console.warn(`Bestellung ${orderId} wurde aus der Discord-Nachricht wiederhergestellt.`);
-          }
-        }
-      } catch (error) {
-        console.error("Bestellübersicht konnte bei Discord-Interaktion nicht gelesen werden:", error.message);
-        send(res, 200, JSON.stringify({
-          type: 4,
-          data: { content: "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.", flags: 64 }
-        }), "application/json; charset=utf-8");
-        return;
-      }
-      if (!order) {
-        console.warn(`Discord-Bestellbutton ${orderId} konnte keiner gespeicherten Bestellung zugeordnet werden (Nachricht ${String(payload.message?.id || "unbekannt")}).`);
-        send(res, 200, JSON.stringify({
-          type: 4,
-          data: { content: "Diese Bestellnachricht ist nicht mehr verfügbar.", flags: 64 }
-        }), "application/json; charset=utf-8");
-        return;
-      }
-      if (isAdminOrderClosed(order)) {
-        const message = buildAdminOrderDiscordPayload(order);
-        send(res, 200, JSON.stringify({
-          type: 7,
-          data: {
-            content: message.content,
-            embeds: message.embeds,
-            components: [],
-            allowed_mentions: message.allowed_mentions
-          }
-        }), "application/json; charset=utf-8");
-        return;
-      }
-
-      order.status = ORDER_STATUS_LABELS[statusKey];
-      order.updatedAt = new Date().toISOString();
-      order.updatedBy = String(payload.member?.user?.global_name || payload.member?.user?.username || "Discord-Admin").slice(0, 80);
-      try {
-        order = updateAdminOrder(order.id, {
-          status: order.status,
-          updatedAt: order.updatedAt,
-          updatedBy: order.updatedBy
         });
-        const message = buildAdminOrderDiscordPayload(order);
-        send(res, 200, JSON.stringify({
-          type: 7,
-          data: {
-            content: message.content,
-            embeds: message.embeds,
-            components: message.components,
-            allowed_mentions: message.allowed_mentions
-          }
-        }), "application/json; charset=utf-8");
-      } catch (error) {
-        console.error("Bestellstatus konnte nicht gespeichert werden:", error.message);
-        send(res, 200, JSON.stringify({
-          type: 4,
-          data: { content: "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.", flags: 64 }
-        }), "application/json; charset=utf-8");
+        return;
       }
+      sendJson(res, 200, { type: 6 });
+      await finishStatusButton(payload, action.orderId, action.statusKey, actorNameFromMember(payload.member));
       return;
     }
 
-    if (action === "material_order_contact" || action === "stank_order_contact"
-      || action === "custom_order_contact" || action === "sell-offer_order_contact") {
-      const phone = payload.message?.embeds?.[0]?.fields
-        ?.find(field => field.name === "Handynummer" || field.name === "Handynummer / IC")?.value;
-      send(res, 200, JSON.stringify({
+    if (action.kind === "contact") {
+      sendJson(res, 200, {
         type: 4,
-        data: {
-          content: phone
-            ? `📞 Kontaktaufnahme: ${phone}`
-            : "Für diese Bestellung ist keine Telefonnummer hinterlegt.",
-          flags: 64
-        }
-      }), "application/json; charset=utf-8");
+        data: { content: contactReply(action.orderId, payload.message?.embeds?.[0]), flags: 64 }
+      });
       return;
     }
 
-    if (!["material_order_delivered", "material_order_rejected", "stank_order_delivered", "stank_order_rejected", "custom_order_delivered", "custom_order_rejected"].includes(action)) {
-      send(res, 200, JSON.stringify({
-        type: 4,
-        data: { content: "Unbekannte Bestellaktion.", flags: 64 }
-      }), "application/json; charset=utf-8");
-      return;
-    }
-
-    const canManageOrders = payload.guild_id === config.guildId
-      && /^\d{17,20}$/.test(config.catalogAdminRoleId)
-      && Array.isArray(payload.member?.roles)
-      && payload.member.roles.includes(config.catalogAdminRoleId);
-    if (!canManageOrders) {
-      send(res, 200, JSON.stringify({
-        type: 4,
-        data: { content: "Du hast keine Berechtigung, den Bestellstatus zu ändern.", flags: 64 }
-      }), "application/json; charset=utf-8");
-      return;
-    }
-
-    const status = action.endsWith("_delivered") ? "Ausgeliefert" : "Abgelehnt";
-    send(res, 200, JSON.stringify({
-      type: 7,
-      data: {
-        content: `✅ Bestellung wurde als ${status} markiert.`,
-        components: []
-      }
-    }), "application/json; charset=utf-8");
+    sendJson(res, 200, {
+      type: 4,
+      data: { content: "Unbekannte Bestellaktion.", flags: 64 }
+    });
     return;
   }
 
-  send(res, 200, JSON.stringify({ type: 4, data: { content: "Interaction verarbeitet." } }), "application/json; charset=utf-8");
+  sendJson(res, 200, { type: 4, data: { content: "Interaction verarbeitet.", flags: 64 } });
 }
 
 async function postToDiscordChannel(orderMessage, channelId = ORDER_CHANNEL_ID, allowWebhook = true) {
@@ -1834,6 +1725,27 @@ async function handleRequest(req, res) {
       return;
     }
 
+    let existing;
+    try {
+      existing = readAdminOrders().find(order => order.id === orderStatusPath[1]);
+    } catch (error) {
+      console.error("Bestellstatus konnte nicht gespeichert werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Der Bestellstatus konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+      return;
+    }
+    if (!existing) {
+      send(res, 404, JSON.stringify({ ok: false, message: "Bestellung nicht gefunden." }), "application/json; charset=utf-8");
+      return;
+    }
+    if (isAdminOrderClosed(existing)) {
+      send(res, 409, JSON.stringify({
+        ok: false,
+        message: "Diese Bestellung ist bereits abgeschlossen und kann nicht mehr geändert werden.",
+        order: existing
+      }), "application/json; charset=utf-8");
+      return;
+    }
+
     let order;
     try {
       order = updateAdminOrder(orderStatusPath[1], {
@@ -1848,14 +1760,6 @@ async function handleRequest(req, res) {
     }
     if (!order) {
       send(res, 404, JSON.stringify({ ok: false, message: "Bestellung nicht gefunden." }), "application/json; charset=utf-8");
-      return;
-    }
-    if (isAdminOrderClosed(order)) {
-      send(res, 409, JSON.stringify({
-        ok: false,
-        message: "Diese Bestellung ist bereits abgeschlossen und kann nicht mehr geändert werden.",
-        order
-      }), "application/json; charset=utf-8");
       return;
     }
 
@@ -2068,6 +1972,11 @@ function startDiscordWelcomeBot() {
   });
   client.on(Events.Error, error => {
     console.error("Discord-Willkommensbot-Verbindung fehlgeschlagen:", error.message);
+  });
+  client.on(Events.InteractionCreate, interaction => {
+    handleGatewayOrderInteraction(interaction).catch(error => {
+      console.error("Discord-Button-Interaktion fehlgeschlagen:", error.message);
+    });
   });
   client.on(Events.GuildMemberAdd, async member => {
     if (member.guild.id !== config.guildId) return;

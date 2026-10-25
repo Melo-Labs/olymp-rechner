@@ -7,7 +7,7 @@
   {
     "id": "benzinkanister",
     "name": "Benzinkanister",
-    "price": 576
+    "price": 500
   },
   {
     "id": "luftfilter-1",
@@ -25,39 +25,34 @@
     "price": 1815
   },
   {
-    "id": "dietrich",
-    "name": "Dietrich",
-    "price": 272
+    "id": "Papier I",
+    "name": "Papier I",
+    "price": 250
   },
   {
-    "id": "chipsatz",
-    "name": "Chipsatz",
+    "id": "Papier II",
+    "name": "Papier II",
+    "price": 550
+  },
+  {
+    "id": "Farbe I ",
+    "name": "Farbe I ",
+    "price": 330
+  },
+  {
+    "id": "Farbe II",
+    "name": "Farbe II",
     "price": 870
   },
   {
-    "id": "stoff",
-    "name": "Stoff",
-    "price": 625
+    "id": "Farbe III",
+    "name": "Farbe III",
+    "price": 2200
   },
   {
     "id": "aceton",
     "name": "Aceton",
     "price": 695
-  },
-  {
-    "id": "wasserstoffperoxid",
-    "name": "Wasserstoffperoxid",
-    "price": 590
-  },
-  {
-    "id": "natriumbenzoat",
-    "name": "Natriumbenzoat",
-    "price": 695
-  },
-  {
-    "id": "propylenglykol",
-    "name": "Propylenglykol",
-    "price": 450
   },
   {
     "id": "toluol",
@@ -78,11 +73,6 @@
     "id": "roter-phosphor",
     "name": "Roter Phosphor",
     "price": 555
-  },
-  {
-    "id": "drehpapier",
-    "name": "Drehpapier",
-    "price": 163
   },
   {
     "id": "schachtel-pseudoephedrin",
