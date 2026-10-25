@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ankauf-Produktverwaltung</title>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    :root{--text:#ececec;--muted:#a8abb1;--gold:#d7ad72;--red:#ff7b7b;--green:#7ee0a6}
+    *{box-sizing:border-box}body{margin:0;color:var(--text);font-family:var(--body);background:#101214}
+    .wrap{width:min(1000px,calc(100% - 32px));margin:auto;padding:36px 0 120px}.topbar{display:flex;gap:16px;align-items:center;margin-bottom:34px}
+    .brand{font:700 1.1rem var(--display);letter-spacing:.06em;color:var(--gold)}nav{margin-left:auto;display:flex;gap:10px;flex-wrap:wrap}a{color:var(--text)}
+    .link,.button{border:1px solid rgba(215,173,114,.35);border-radius:6px;padding:10px 14px;background:rgba(255,255,255,.04);text-decoration:none;color:var(--text);cursor:pointer}
+    .link:hover,.button:hover{border-color:var(--gold)}h1{font:700 clamp(2rem,5vw,3.4rem) var(--display);margin:0 0 10px}.lead{color:var(--muted);line-height:1.6}
+    .panel{margin-top:28px;padding:24px;border:1px solid rgba(215,173,114,.35);border-radius:6px;background:rgba(12,13,15,.78)}
+    .meta{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}.count{color:var(--muted)}.products{display:grid;gap:12px}
+    .product{display:grid;grid-template-columns:minmax(0,1fr) 150px auto;gap:12px;align-items:end;padding:16px;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(255,255,255,.025)}
+    label{display:grid;gap:6px;color:var(--muted);font-size:.85rem}input{width:100%;padding:11px 12px;border:1px solid rgba(255,255,255,.18);border-radius:5px;background:#090a0c;color:var(--text);font:inherit}input:focus{outline:2px solid rgba(215,173,114,.5)}
+    .id{grid-column:1/-1;font-family:monospace;font-size:.85rem}.remove{color:var(--red);border-color:rgba(255,123,123,.4)}.actions{display:flex;justify-content:space-between;gap:12px;margin-top:20px;align-items:center}.status{color:var(--muted);min-height:24px}.status.error{color:var(--red)}.status.success{color:var(--green)}
+    .primary{background:linear-gradient(135deg,#f3dfc2,#c29a63);color:#0a0a0b;border:0;font-weight:700}.empty{color:var(--muted);padding:18px 0}
+    @media(max-width:650px){.topbar,.meta,.actions{align-items:stretch;flex-direction:column}.product{grid-template-columns:1fr 1fr}.remove{grid-column:1/-1}.brand{margin-bottom:4px}nav{margin-left:0}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="topbar"><span class="brand">OLYMP · ADMIN</span><nav><a class="link" href="/admin/catalog">Shop-Produkte</a><a class="link" href="/admin/orders">Bestellungen</a><a class="link" href="/ankauf.html">Zum Ankauf</a></nav></header>
+    <h1>Ankauf-Produkte</h1>
+    <p class="lead">Verwalte die Produkte und Stückpreise, die im Ankauf angezeigt werden. Änderungen werden erst nach dem Speichern öffentlich.</p>
+    <section class="panel">
+      <div class="meta"><strong>Unsere Ankaufspreise</strong><span id="count" class="count">Wird geladen …</span></div>
+      <div id="products" class="products"><p class="empty">Produkte werden geladen …</p></div>
+      <div class="actions"><p id="status" class="status" role="status" aria-live="polite"></p><div><button id="add" class="button" type="button">+ Produkt</button> <button id="save" class="button primary" type="button" disabled>Speichern</button></div></div>
+    </section>
+  </main>
+  <script src="/bg.js"></script><script src="/admin/buyback.js"></script>
+</body>
+</html>

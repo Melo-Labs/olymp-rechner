@@ -102,6 +102,8 @@ const staticFiles = new Map([
   ["/freie-bestellung.js", "freie-bestellung.js"],
   ["/admin/catalog", "catalog-admin.html"],
   ["/admin/catalog.js", "catalog-admin.js"],
+  ["/admin/buyback", "buyback-admin.html"],
+  ["/admin/buyback.js", "buyback-admin.js"],
   ["/admin/orders", "orders-admin.html"],
   ["/admin/orders.js", "orders-admin.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
@@ -753,6 +755,32 @@ function saveShopProducts(products) {
   const temporaryFile = `${CATALOG_FILE}.${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(temporaryFile, JSON.stringify(products, null, 2), { encoding: "utf8", flag: "wx" });
   fs.renameSync(temporaryFile, CATALOG_FILE);
+}
+
+function saveBuybackProducts(products) {
+  const temporaryFile = `${BUYBACK_PRODUCTS_FILE}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryFile, JSON.stringify(products, null, 2), { encoding: "utf8", flag: "wx" });
+  fs.renameSync(temporaryFile, BUYBACK_PRODUCTS_FILE);
+}
+
+function validateBuybackProducts(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
+    return { error: "Die Ankaufspreisliste muss zwischen 1 und 100 Produkte enthalten." };
+  }
+  const products = [];
+  const ids = new Set();
+  for (const entry of value) {
+    const id = String(entry?.id || "").trim();
+    const name = String(entry?.name || "").trim();
+    const price = Number(entry?.price);
+    if (!/^[a-z0-9-]{1,80}$/.test(id) || !name || name.length > 80
+      || !Number.isSafeInteger(price) || price < 1 || price > 1000000000 || ids.has(id)) {
+      return { error: "Produktdaten ungültig: ID, Name und Preis prüfen." };
+    }
+    ids.add(id);
+    products.push({ id, name, price });
+  }
+  return { products };
 }
 
 async function requireCatalogAdmin(req, res, config, redirectPath = "/admin/catalog") {
@@ -1884,6 +1912,39 @@ async function handleRequest(req, res) {
     }), "application/json; charset=utf-8");
     return;
   }
+  if ((req.method === "GET" || req.method === "PUT") && pathname === "/api/admin/buyback-products") {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/buyback");
+    if (!adminSession) return;
+    if (req.method === "GET") {
+      try {
+        send(res, 200, JSON.stringify({ ok: true, products: readBuybackProducts() }), "application/json; charset=utf-8");
+      } catch (error) {
+        console.error("Ankauf-Preisliste konnte nicht gelesen werden:", error.message);
+        send(res, 500, JSON.stringify({ ok: false, message: "Die Ankauf-Preisliste konnte nicht gelesen werden." }), "application/json; charset=utf-8");
+      }
+      return;
+    }
+    let payload;
+    try {
+      payload = JSON.parse(await readRequestBody(req, 64 * 1024));
+    } catch {
+      send(res, 400, JSON.stringify({ ok: false, message: "Ungültige oder zu große Produktdaten." }), "application/json; charset=utf-8");
+      return;
+    }
+    const validation = validateBuybackProducts(payload?.products);
+    if (validation.error) {
+      send(res, 400, JSON.stringify({ ok: false, message: validation.error }), "application/json; charset=utf-8");
+      return;
+    }
+    try {
+      saveBuybackProducts(validation.products);
+      send(res, 200, JSON.stringify({ ok: true, products: validation.products }), "application/json; charset=utf-8");
+    } catch (error) {
+      console.error("Ankauf-Preisliste konnte nicht gespeichert werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Die Ankauf-Preisliste konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+    }
+    return;
+  }
   if (req.method !== "GET" && req.method !== "HEAD") {
     send(res, 405, "Methode nicht erlaubt");
     return;
@@ -1914,6 +1975,12 @@ async function handleRequest(req, res) {
   }
   if (pathname === "/admin/catalog" || pathname === "/admin/catalog.js") {
     const adminSession = await requireCatalogAdmin(req, res, config);
+    if (!adminSession) return;
+    serveStatic(req, res, pathname);
+    return;
+  }
+  if (pathname === "/admin/buyback" || pathname === "/admin/buyback.js") {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/buyback");
     if (!adminSession) return;
     serveStatic(req, res, pathname);
     return;
