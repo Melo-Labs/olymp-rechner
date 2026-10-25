@@ -1182,18 +1182,40 @@ async function handleDiscordInteraction(req, res) {
     return;
   }
 
-  const signature = req.headers["x-signature-ed25519"];
-  const timestamp = req.headers["x-signature-timestamp"];
-  if (!await verifyDiscordInteraction(rawBody, String(signature || ""), String(timestamp || ""), config.publicKey)) {
-    sendJson(res, 401, { error: "Invalid request signature" });
-    return;
-  }
-
   let payload = {};
   try {
     payload = JSON.parse(rawBody || "{}");
   } catch {
     sendJson(res, 400, { error: "Invalid interaction payload" });
+    return;
+  }
+
+  const signature = req.headers["x-signature-ed25519"];
+  const timestamp = req.headers["x-signature-timestamp"];
+  const verifyRequest = () => verifyDiscordInteraction(
+    rawBody,
+    String(signature || ""),
+    String(timestamp || ""),
+    config.publicKey
+  );
+
+  // Statusbuttons sofort quittieren. Discord gibt dafür nur wenige Sekunden;
+  // Signaturprüfung und Dateiverarbeitung dürfen die erste Antwort nicht verzögern.
+  if (payload.type === 3 && payload.data?.component_type === 2) {
+    const action = parseButtonAction(payload.data.custom_id);
+    if (action.kind === "status" && memberCanManageOrders(payload.guild_id, payload.member?.roles, config)) {
+      sendJson(res, 200, { type: 6 });
+      if (!await verifyRequest()) {
+        console.error("Discord-Interaction mit ungültiger Signatur verworfen.");
+        return;
+      }
+      await finishStatusButton(payload, action.orderId, action.statusKey, actorNameFromMember(payload.member));
+      return;
+    }
+  }
+
+  if (!await verifyRequest()) {
+    sendJson(res, 401, { error: "Invalid request signature" });
     return;
   }
 
@@ -1212,8 +1234,8 @@ async function handleDiscordInteraction(req, res) {
         });
         return;
       }
-      sendJson(res, 200, { type: 6 });
-      await finishStatusButton(payload, action.orderId, action.statusKey, actorNameFromMember(payload.member));
+      // Der autorisierte Statusbutton wurde im schnellen Pfad oben verarbeitet.
+      sendJson(res, 500, { error: "Status-Interaction konnte nicht bestätigt werden." });
       return;
     }
 
