@@ -1205,11 +1205,13 @@ async function handleDiscordInteraction(req, res) {
     const action = parseButtonAction(payload.data.custom_id);
     if (action.kind === "status" && memberCanManageOrders(payload.guild_id, payload.member?.roles, config)) {
       sendJson(res, 200, { type: 6 });
-      if (!await verifyRequest()) {
-        console.error("Discord-Interaction mit ungültiger Signatur verworfen.");
-        return;
-      }
-      await finishStatusButton(payload, action.orderId, action.statusKey, actorNameFromMember(payload.member));
+      void (async () => {
+        if (!await verifyRequest()) {
+          console.error("Discord-Interaction mit ungültiger Signatur verworfen.");
+          return;
+        }
+        await finishStatusButton(payload, action.orderId, action.statusKey, actorNameFromMember(payload.member));
+      })().catch(error => console.error("Discord-Statusverarbeitung fehlgeschlagen:", error.message));
       return;
     }
   }
