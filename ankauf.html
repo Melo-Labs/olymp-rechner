@@ -5,53 +5,50 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ankauf-Angebot</title>
   <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/forms.css">
   <style>
-    :root{--text:#ececec;--muted:#9a9da3;--a:#d7ad72;--green:#7ee0a6;--red:#ff7b7b;--br:rgba(215,173,114,.5)}
-    *{box-sizing:border-box}
-    body{margin:0;min-height:100vh;color:var(--text);font-family:var(--body);-webkit-font-smoothing:antialiased}
-    .wrap{width:min(960px,calc(100% - 32px));margin:0 auto;padding:clamp(28px,6vw,64px) 0 72px}
-    .topbar{display:flex;align-items:center;gap:16px;margin-bottom:22px}
-    .brand-logo{width:64px;height:64px;object-fit:cover;border-radius:50%;border:1px solid rgba(215,173,114,.5);background:#000;box-shadow:0 0 28px rgba(215,173,114,.18)}
-    .back{display:inline-flex;align-items:center;gap:8px;margin-left:auto;padding:10px 14px;border:1px solid rgba(228,232,238,.16);border-radius:6px;background:rgba(255,255,255,.03);color:var(--text);font-weight:700;text-decoration:none;transition:border-color .2s,box-shadow .2s}
-    .back:hover{border-color:var(--a);box-shadow:0 0 18px -6px rgba(215,173,114,.5)}
-    .back:focus-visible{outline:2px solid var(--a);outline-offset:3px}
-    h1{margin:0 0 14px;font:900 clamp(2rem,6vw,4rem)/1.05 var(--display);letter-spacing:.05em;text-shadow:0 0 20px rgba(215,173,114,.3)}
-    .lead{margin:0;max-width:62ch;color:var(--muted);line-height:1.6;font-size:clamp(1rem,1.5vw,1.15rem)}
-    .card{position:relative;margin-top:28px;max-width:760px;padding:28px 26px 24px;border:1px solid rgba(215,173,114,.18);border-radius:6px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 30px 50px -34px rgba(0,0,0,.9);background:linear-gradient(var(--br),var(--br)) 0 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 0/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 0 100%/1px 14px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/14px 1px no-repeat,linear-gradient(var(--br),var(--br)) 100% 100%/1px 14px no-repeat,linear-gradient(165deg,rgba(27,29,33,.82),rgba(11,12,14,.9))}
-    .card h2{margin:0 0 16px;font:700 1.25rem/1.2 var(--display);letter-spacing:.05em}
-    .price-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
-    .price-item{display:grid;gap:12px;padding:12px 14px;border:1px solid rgba(215,173,114,.12);border-radius:6px;background:rgba(0,0,0,.2);cursor:pointer;transition:border-color .2s,background .2s}
-    .price-item.selected{border-color:rgba(215,173,114,.65);background:rgba(215,173,114,.08)}
-    .item-main{display:flex;align-items:center;gap:10px}
-    .item-main input[type=checkbox]{flex:none;width:20px;height:20px;margin:0;padding:0;accent-color:var(--a);cursor:pointer}
-    .item-name{flex:1;font-weight:600;line-height:1.35;cursor:pointer}
-    .item-price{flex:none;color:var(--a);font-weight:700;white-space:nowrap}
-    .quantity-control{display:none;grid-template-columns:48px minmax(0,1fr) 48px;gap:8px}
-    .price-item.selected .quantity-control{display:grid}
-    .quantity-control button{border:1px solid rgba(228,232,238,.24);border-radius:6px;background:rgba(228,232,238,.08);color:var(--text);font:700 1.4rem/1 var(--display);cursor:pointer;transition:background .2s,border-color .2s}
-    .quantity-control button:hover{border-color:var(--a);background:rgba(215,173,114,.16)}
-    .quantity-control button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
-    input.quantity-input{min-width:0;padding:8px 10px;text-align:center}
-    .price-note,.loading-products{margin:16px 0 0;color:var(--muted);font-size:.9rem;line-height:1.5}
-    form{display:grid;gap:18px;margin-top:8px}
-    .field{display:grid;gap:8px}
-    .field-label{font-size:1rem;font-weight:600;color:rgba(236,236,236,.92)}
-    label{font-size:1rem;font-weight:600;color:rgba(236,236,236,.92)}
-    input:not([type=checkbox]){width:100%;padding:15px 16px;border-radius:6px;border:1px solid rgba(228,232,238,.16);background:rgba(0,0,0,.38);color:var(--text);font:inherit;font-size:1.05rem;transition:border-color .2s,box-shadow .2s}
-    input:not([type=checkbox]):hover{border-color:rgba(215,173,114,.55)}
-    input:not([type=checkbox]):focus{outline:none;border-color:var(--a);box-shadow:0 0 0 3px rgba(215,173,114,.14),0 0 24px -6px rgba(215,173,114,.4)}
-    input:not([type=checkbox]):disabled{opacity:.45}
-    .hint{margin:0;color:var(--muted);font-size:.9rem;line-height:1.5}
-    .summary{display:grid;gap:10px;padding:16px;border:1px dashed rgba(215,173,114,.3);border-radius:6px;background:rgba(215,173,114,.04)}
-    .summary p{margin:0;color:var(--muted);line-height:1.5}
-    .summary-total{display:flex;justify-content:space-between;gap:12px;padding-top:10px;border-top:1px solid rgba(215,173,114,.16)}
-    .summary-total strong{color:var(--a)}
-    .cta{display:inline-flex;align-items:center;justify-content:center;width:100%;padding:15px 18px;border:0;border-radius:6px;background:linear-gradient(135deg,#f3dfc2,#c29a63);color:#0a0a0b;font:700 .95rem var(--display);letter-spacing:.08em;cursor:pointer;transition:box-shadow .25s,transform .2s}
-    .cta:hover{transform:translateY(-1px);box-shadow:0 0 30px rgba(215,173,114,.4)}
-    .cta:disabled{cursor:wait;opacity:.65;transform:none}
-    .status{min-height:24px;font-size:.92rem;color:var(--muted);font-weight:600}
-    .status.error{color:var(--red)}.status.success{color:var(--green)}
-    @media (max-width:760px){.card{padding:22px 16px 18px}.price-grid{grid-template-columns:1fr}}
+    /* Ankauf — page accent (gold) on top of forms.css */
+    :root {
+      --page-accent: var(--warn, #e0b35c);
+      --page-accent-soft: rgba(224, 179, 92, 0.12);
+    }
+    .brand-logo {
+      border-color: color-mix(in srgb, var(--page-accent) 45%, var(--line));
+      border-radius: 14px;
+    }
+    h1 { color: var(--tx); }
+    .card {
+      max-width: 760px;
+      border-color: color-mix(in srgb, var(--page-accent) 22%, var(--line));
+    }
+    .item-price { color: var(--page-accent); }
+    .price-item.selected {
+      border-color: color-mix(in srgb, var(--page-accent) 55%, var(--line));
+      background: var(--page-accent-soft);
+    }
+    .quantity-control button:hover {
+      border-color: var(--page-accent);
+      background: var(--page-accent-soft);
+    }
+    input:not([type=checkbox]):hover {
+      border-color: color-mix(in srgb, var(--page-accent) 40%, var(--line));
+    }
+    input:not([type=checkbox]):focus {
+      border-color: var(--page-accent);
+      box-shadow: 0 0 0 3px var(--page-accent-soft);
+    }
+    .summary {
+      border-color: color-mix(in srgb, var(--page-accent) 35%, var(--line));
+      background: var(--page-accent-soft);
+    }
+    .cta {
+      background: var(--page-accent);
+      color: #1a1408;
+    }
+    .cta:hover:not(:disabled) { filter: brightness(1.08); }
+    @media (max-width: 640px) {
+      .price-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
