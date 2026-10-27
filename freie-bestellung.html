@@ -30,6 +30,11 @@
       --shop-body: var(--body);
     }
 
+    @media (max-width: 380px) {
+      .coupon-entry { grid-template-columns: 1fr; }
+      .coupon-apply { width: 100%; }
+    }
+
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     html { scroll-behavior: smooth; scroll-padding-top: 132px; }
@@ -243,6 +248,19 @@
     .remove-item:hover { border-color: rgba(255, 123, 123, .4); color: var(--shop-red); }
     .cart-total { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 0 10px; color: #aeb8bf; font-size: 9px; }
     .cart-total strong { color: #f0f3f4; font: 700 14px var(--shop-display); white-space: nowrap; }
+    .coupon-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; margin: 4px 0 0; }
+    .coupon-field { display: grid; gap: 5px; min-width: 0; color: #c4cbd0; font-size: 12px; }
+    .coupon-field input { width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--shop-line); border-radius: 4px; background: #080c10; color: var(--shop-text); font-size: 15px; }
+    .coupon-field input::placeholder { color: #83909a; }
+    .coupon-apply { min-height: 44px; padding: 8px 12px; border: 1px solid var(--shop-line); border-radius: 4px; background: var(--shop-surface-raised); color: var(--shop-text); font-size: 13px; font-weight: 700; }
+    .coupon-apply:hover:not(:disabled) { border-color: var(--shop-blue); }
+    .coupon-apply:disabled { opacity: .58; cursor: not-allowed; }
+    .coupon-feedback { min-height: 18px; margin: 4px 0 0; color: #b4bec8; font-size: 12px; }
+    .coupon-feedback.success { color: var(--shop-green); }
+    .coupon-feedback.error { color: var(--shop-red); }
+    .coupon-discount strong { color: var(--shop-green); }
+    .checkout-total { border-top: 1px solid var(--shop-line); color: var(--shop-text); font-size: 12px; }
+    .checkout-total strong { font-size: 17px; }
     .cart-fields { display: grid; gap: 7px; }
     .cart-fields .field label { font-size: 9px; }
     .cart-fields .field input { min-height: 32px; font-size: 10px; }
@@ -516,6 +534,16 @@
                 <div class="cart-empty"><strong>Dein Warenkorb ist noch leer.</strong>Füge zuerst ein Produkt hinzu.</div>
               </div>
               <div class="cart-total"><span>Zwischensumme</span><strong id="custom-total">0 $</strong></div>
+              <div class="coupon-entry">
+                <label class="coupon-field" for="coupon-code">
+                  Rabattcode
+                  <input id="coupon-code" name="couponCode" type="text" maxlength="32" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Code eingeben">
+                </label>
+                <button id="apply-coupon" class="coupon-apply" type="button">Einlösen</button>
+              </div>
+              <p id="coupon-feedback" class="coupon-feedback" role="status" aria-live="polite"></p>
+              <div id="coupon-discount-row" class="cart-total coupon-discount" hidden><span>Coupon-Rabatt</span><strong id="coupon-discount">0 $</strong></div>
+              <div class="cart-total checkout-total"><span>Endpreis</span><strong id="custom-final-total">0 $</strong></div>
               <div class="cart-fields">
                 <div class="field">
                   <label for="custom-ic-name">IC-Name</label>

@@ -40,6 +40,15 @@ function orderDetails(order) {
   return 'Keine weiteren Positionsdaten vorhanden.';
 }
 
+function orderPriceDetails(order) {
+  if (!order.couponCode) return `Gesamt: ${Number(order.totalPrice || 0).toLocaleString('de-DE')} $`;
+  return [
+    `Zwischensumme: ${Number(order.subtotalPrice || 0).toLocaleString('de-DE')} $`,
+    `Coupon ${order.couponCode} (${Number(order.couponPercent || 0)} %) · Rabatt: −${Number(order.discountAmount || 0).toLocaleString('de-DE')} $`,
+    `Endpreis: ${Number(order.totalPrice || 0).toLocaleString('de-DE')} $`
+  ].join('\n');
+}
+
 function dateLabel(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'Zeit unbekannt' : date.toLocaleString('de-DE');
@@ -51,7 +60,7 @@ function renderOrders() {
     if (statusFilter.value && order.status !== statusFilter.value) return false;
     if (typeFilter.value && order.type !== typeFilter.value) return false;
     if (!query) return true;
-    const searchable = [order.icName, order.customerName, order.phone, order.type, order.status, order.message, ...(order.items || []).map(item => item.name)].join(' ').toLocaleLowerCase('de-DE');
+    const searchable = [order.icName, order.customerName, order.phone, order.type, order.status, order.message, order.couponCode, ...(order.items || []).map(item => item.name)].join(' ').toLocaleLowerCase('de-DE');
     return searchable.includes(query);
   });
   ordersContainer.replaceChildren();
@@ -83,7 +92,7 @@ function renderOrders() {
 
     const details = document.createElement('p');
     details.className = 'details';
-    details.textContent = `${orderDetails(order)}\nGesamt: ${Number(order.totalPrice || 0).toLocaleString('de-DE')} $`;
+    details.textContent = `${orderDetails(order)}\n${orderPriceDetails(order)}`;
     const delivery = document.createElement('p');
     delivery.className = 'delivery';
     delivery.textContent = order.deliveryStatus === 'bot'

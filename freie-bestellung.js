@@ -31,6 +31,12 @@ const storageStatus = document.getElementById('storage-status');
 const orderNote = document.getElementById('order-note');
 const icNameInput = document.getElementById('custom-ic-name');
 const phoneInput = document.getElementById('custom-phone');
+const couponCodeInput = document.getElementById('coupon-code');
+const couponApplyButton = document.getElementById('apply-coupon');
+const couponFeedback = document.getElementById('coupon-feedback');
+const couponDiscountRow = document.getElementById('coupon-discount-row');
+const couponDiscountOutput = document.getElementById('coupon-discount');
+const finalTotalOutput = document.getElementById('custom-final-total');
 const customNameInput = document.getElementById('custom-name');
 const customQuantityInput = document.getElementById('custom-quantity');
 const customPriceInput = document.getElementById('custom-price');
@@ -45,6 +51,8 @@ let products = [];
 let cart = [];
 let weeklyBundle = null;
 let activeCategory = '';
+let activeCoupon = null;
+let couponChecking = false;
 let adRotationTimer = null;
 let feedbackTimer = null;
 let storageAvailable = true;
@@ -627,15 +635,71 @@ function renderCart() {
   }
 
   const itemLabel = `${cart.length} ${cart.length === 1 ? 'Position' : 'Positionen'}`;
+  const discountAmount = activeCoupon
+    ? Number((BigInt(total) * BigInt(activeCoupon.percent) + 50n) / 100n)
+    : 0;
   itemCount.textContent = itemLabel;
   cartCount.textContent = String(cart.length);
   cartCountLabel.setAttribute('aria-label', `Warenkorb, ${itemLabel}`);
   totalOutput.textContent = formatPrice(total);
+  couponDiscountRow.hidden = !activeCoupon || discountAmount === 0;
+  couponDiscountOutput.textContent = `−${formatPrice(discountAmount)}`;
+  finalTotalOutput.textContent = formatPrice(total - discountAmount);
+  couponApplyButton.disabled = couponChecking || !couponCodeInput.value.trim() || total < 1;
   const hasContacts = Boolean(icNameInput.value.trim() && phoneInput.value.trim());
   submitButton.disabled = cart.length === 0 || !hasContacts;
   if (!cart.length) orderNote.textContent = 'Füge ein Produkt hinzu und ergänze deine Kontaktdaten.';
   else if (!hasContacts) orderNote.textContent = 'Noch nicht bereit — bitte Kontaktdaten ergänzen.';
   else orderNote.textContent = 'Bereit zum Absenden. Katalogpreise werden beim Bestellen geprüft.';
+}
+
+function setCouponFeedback(message, state = '') {
+  couponFeedback.textContent = message;
+  couponFeedback.className = `coupon-feedback ${state}`.trim();
+}
+
+async function applyCoupon() {
+  const code = couponCodeInput.value.trim();
+  const subtotal = cart.reduce((sum, item) => sum + item.quantity * item.pricePerItem, 0);
+  if (!code) {
+    activeCoupon = null;
+    renderCart();
+    setCouponFeedback('Gib zuerst einen Coupon-Code ein.', 'error');
+    return false;
+  }
+  if (!Number.isSafeInteger(subtotal) || subtotal < 1) {
+    setCouponFeedback('Füge zuerst mindestens ein Produkt zum Warenkorb hinzu.', 'error');
+    return false;
+  }
+
+  couponChecking = true;
+  couponApplyButton.disabled = true;
+  couponApplyButton.textContent = 'Prüfe …';
+  try {
+    const response = await fetch('/api/coupons/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, subtotal })
+    });
+    const result = await response.json();
+    if (!response.ok || result.ok !== true || !result.coupon) {
+      throw new Error(result.message || 'Coupon-Code konnte nicht angewendet werden.');
+    }
+    activeCoupon = result.coupon;
+    couponCodeInput.value = result.coupon.code;
+    renderCart();
+    setCouponFeedback(`${result.coupon.percent}% Rabatt angewendet. Du sparst ${formatPrice(result.discountAmount)}.`, 'success');
+    return true;
+  } catch (error) {
+    activeCoupon = null;
+    renderCart();
+    setCouponFeedback(error.message || 'Coupon-Code konnte nicht angewendet werden.', 'error');
+    return false;
+  } finally {
+    couponChecking = false;
+    couponApplyButton.textContent = 'Einlösen';
+    renderCart();
+  }
 }
 
 function setCustomStatus(message, type = '') {
@@ -799,9 +863,21 @@ noResultsWishButton.addEventListener('click', () => {
 shopSearchInput.addEventListener('input', renderProducts);
 sortSelect.addEventListener('change', renderProducts);
 document.getElementById('add-custom-item').addEventListener('click', addCustomItem);
+couponCodeInput.addEventListener('input', () => {
+  activeCoupon = null;
+  setCouponFeedback('');
+  renderCart();
+});
+couponApplyButton.addEventListener('click', () => { void applyCoupon(); });
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (!form.reportValidity() || !cart.length) return;
+
+  const requestedCoupon = couponCodeInput.value.trim();
+  const activeCode = activeCoupon?.code || '';
+  if (requestedCoupon && requestedCoupon.toUpperCase() !== activeCode) {
+    if (!await applyCoupon()) return;
+  }
 
   const items = cart.map(item => item.type === 'catalog'
     ? { type: 'catalog', productId: item.productId, quantity: item.quantity }
@@ -818,7 +894,7 @@ form.addEventListener('submit', async event => {
     const response = await fetch('/api/wunsch-bestellung', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ icName, phone, items })
+      body: JSON.stringify({ icName, phone, items, couponCode: couponCodeInput.value.trim() })
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || result.ok === false) {
@@ -828,9 +904,11 @@ form.addEventListener('submit', async event => {
     statusBox.textContent = result.message || `Bestellung gesendet. Gesamt: ${formatPrice(result.total)}.`;
     statusBox.className = 'status order-status success';
     cart = [];
+    activeCoupon = null;
     persistCart();
     form.reset();
     renderCart();
+    setCouponFeedback('');
     showCartFeedback('Bestellung wurde gesendet.', 'Der Warenkorb wurde geleert.');
   } catch (error) {
     statusBox.textContent = error.message || 'Fehler beim Senden der Bestellung.';

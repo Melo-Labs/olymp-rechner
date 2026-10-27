@@ -17,6 +17,13 @@ const {
 } = require("discord.js");
 const { CATEGORY_LABELS, createLedger, periodRange, shiftDateKey, summarize } = require("./ledger");
 const {
+  calculateCouponPrice,
+  couponUsesRemaining,
+  findActiveCoupon,
+  normalizeCouponCode,
+  validateCouponDefinition
+} = require("./coupon-utils");
+const {
   ORDER_STATUS_LABELS,
   isAdminOrderClosed,
   displayAdminOrderStatus,
@@ -101,6 +108,7 @@ function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
 const CATALOG_FILE = resolvePersistentDataFile("CATALOG_FILE", "data/shop-products.json", LEGACY_CATALOG_FILE);
 const CATALOG_AUDIT_PENDING_FILE = resolvePersistentDataFile("CATALOG_AUDIT_PENDING_FILE", "data/shop-audit-pending.json", LEGACY_CATALOG_AUDIT_PENDING_FILE);
 const ADMIN_ORDERS_FILE = resolvePersistentDataFile("ADMIN_ORDERS_FILE", "data/admin-orders.json");
+const SHOP_COUPONS_FILE = resolvePersistentDataFile("SHOP_COUPONS_FILE", "data/shop-coupons.json");
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
@@ -119,6 +127,8 @@ const staticFiles = new Map([
   ["/freie-bestellung.js", "freie-bestellung.js"],
   ["/admin/catalog", "catalog-admin.html"],
   ["/admin/catalog.js", "catalog-admin.js"],
+  ["/admin/coupons", "coupons-admin.html"],
+  ["/admin/coupons.js", "coupons-admin.js"],
   ["/admin/buyback", "buyback-admin.html"],
   ["/admin/buyback.js", "buyback-admin.js"],
   ["/admin/nav.css", "admin-nav.css"],
@@ -231,7 +241,7 @@ function loginPage(error = "", title = "Produktionsrechner", redirectPath = "/pr
     cancelled: "Die Discord-Anmeldung wurde abgebrochen."
   };
   const message = messages[error] || "";
-  const adminPath = ["/admin/catalog", "/admin/orders", "/admin/accounting"].includes(redirectPath) ? redirectPath : "/admin/catalog";
+  const adminPath = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons"].includes(redirectPath) ? redirectPath : "/admin/catalog";
   const authHref = title === "Admin Panel" ? `/auth/discord?next=${encodeURIComponent(adminPath)}` : "/auth/discord";
   return `<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung</title>
@@ -391,7 +401,7 @@ async function beginLogin(req, res, config) {
   if (!configIsReady(config)) {
     const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const requestedDestination = loginUrl.searchParams.get("next");
-    const isAdmin = ["/admin/catalog", "/admin/orders", "/admin/accounting"].includes(requestedDestination);
+    const isAdmin = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons"].includes(requestedDestination);
     send(res, 503, loginPage("setup", isAdmin ? "Admin Panel" : "Produktionsrechner", requestedDestination || "/admin/catalog"), "text/html; charset=utf-8");
     return;
   }
@@ -401,7 +411,7 @@ async function beginLogin(req, res, config) {
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const requestedDestination = loginUrl.searchParams.get("next");
-  const redirectPath = ["/admin/catalog", "/admin/orders", "/admin/accounting"].includes(requestedDestination) ? requestedDestination : "";
+  const redirectPath = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons"].includes(requestedDestination) ? requestedDestination : "";
   pendingLogins.set(state, { verifier, redirectPath, expiresAt: Date.now() + 10 * 60 * 1000 });
   appendCookie(res, makeCookie("olymp_oauth_state", state, 600));
   const query = new URLSearchParams({
@@ -619,6 +629,123 @@ function writeAccountingJson(filePath, value) {
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(temporaryPath, JSON.stringify(value, null, 2), { encoding: "utf8", mode: 0o600 });
   fs.renameSync(temporaryPath, filePath);
+}
+
+function readShopCoupons() {
+  const coupons = JSON.parse(fs.readFileSync(SHOP_COUPONS_FILE, "utf8"));
+  if (!Array.isArray(coupons) || coupons.length > 1000) {
+    throw new Error("Coupon-Datei enthält keine gültige Coupon-Liste.");
+  }
+  const ids = new Set();
+  const codes = new Set();
+  for (const coupon of coupons) {
+    if (!coupon || typeof coupon !== "object" || Array.isArray(coupon)) {
+      throw new Error("Coupon-Datei enthält ungültige Einträge.");
+    }
+    const definition = validateCouponDefinition(coupon);
+    if (!/^[a-f0-9-]{36}$/i.test(coupon.id || "")
+      || definition.code !== coupon.code
+      || coupon.percent !== definition.percent
+      || typeof coupon.active !== "boolean"
+      || (coupon.maxUses !== undefined && coupon.maxUses !== definition.maxUses)
+      || typeof coupon.createdAt !== "string"
+      || Number.isNaN(Date.parse(coupon.createdAt))
+      || typeof coupon.createdBy !== "string"
+      || coupon.createdBy.length > 80
+      || ids.has(coupon.id)
+      || codes.has(coupon.code)) {
+      throw new Error("Coupon-Datei enthält ungültige oder doppelte Einträge.");
+    }
+    ids.add(coupon.id);
+    codes.add(coupon.code);
+  }
+  return coupons;
+}
+
+function getCouponUsageCounts(coupons) {
+  const counts = new Map(coupons.map(coupon => [coupon.code, 0]));
+  for (const order of readAdminOrders()) {
+    const code = typeof order.couponCode === "string" ? order.couponCode.toUpperCase() : "";
+    if (counts.has(code)) counts.set(code, counts.get(code) + 1);
+  }
+  return counts;
+}
+
+function couponWithUsage(coupon, uses) {
+  return {
+    ...coupon,
+    maxUses: coupon.maxUses ?? null,
+    uses,
+    usesRemaining: couponUsesRemaining(coupon, uses)
+  };
+}
+
+function couponRequestError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+function priceOrderWithCoupon(subtotal, rawCode) {
+  const requestedCode = String(rawCode || "").trim();
+  if (!requestedCode) {
+    return {
+      subtotalPrice: subtotal,
+      discountAmount: 0,
+      totalPrice: subtotal,
+      couponCode: "",
+      couponPercent: 0
+    };
+  }
+
+  let code;
+  try {
+    code = normalizeCouponCode(requestedCode);
+  } catch (error) {
+    throw couponRequestError(error.message);
+  }
+  const coupons = readShopCoupons();
+  const coupon = findActiveCoupon(coupons, code);
+  if (!coupon) {
+    throw couponRequestError("Dieser Coupon-Code ist ungültig oder nicht mehr aktiv.");
+  }
+  const uses = getCouponUsageCounts(coupons).get(coupon.code) || 0;
+  if (couponUsesRemaining(coupon, uses) === 0) {
+    throw couponRequestError("Dieser Coupon hat sein Einlösungslimit bereits erreicht.");
+  }
+  const price = calculateCouponPrice(subtotal, coupon.percent);
+  return {
+    subtotalPrice: price.subtotal,
+    discountAmount: price.discountAmount,
+    totalPrice: price.total,
+    couponCode: coupon.code,
+    couponPercent: coupon.percent
+  };
+}
+
+function sendCouponOrderError(res, error, context) {
+  const status = error.statusCode || 500;
+  if (status >= 500) console.error(`${context}:`, error.message);
+  send(res, status, JSON.stringify({
+    ok: false,
+    message: status === 400 ? error.message : "Coupons sind momentan nicht verfügbar."
+  }), "application/json; charset=utf-8");
+}
+
+function priceBreakdownMessage(pricing) {
+  if (!pricing.couponCode) return `Gesamtpreis: ${pricing.totalPrice.toLocaleString("de-DE")} $.`;
+  return `Zwischensumme: ${pricing.subtotalPrice.toLocaleString("de-DE")} $ · Coupon ${pricing.couponCode} (${pricing.couponPercent}%): −${pricing.discountAmount.toLocaleString("de-DE")} $ · Endpreis: ${pricing.totalPrice.toLocaleString("de-DE")} $.`;
+}
+
+function couponPriceResponse(pricing) {
+  return {
+    subtotal: pricing.subtotalPrice,
+    discountAmount: pricing.discountAmount,
+    total: pricing.totalPrice,
+    coupon: pricing.couponCode
+      ? { code: pricing.couponCode, percent: pricing.couponPercent }
+      : null
+  };
 }
 
 function readAccountingReports() {
@@ -2137,12 +2264,24 @@ async function handleStankOrder(req, res) {
     return;
   }
 
-  const totalPrice = quantity * 2000;
+  const subtotalPrice = quantity * 2000;
+  let pricing;
+  try {
+    pricing = priceOrderWithCoupon(subtotalPrice, payload.couponCode);
+  } catch (error) {
+    sendCouponOrderError(res, error, "STANK-Coupon konnte nicht geprüft werden");
+    return;
+  }
+  const { totalPrice, discountAmount, couponCode, couponPercent } = pricing;
   const order = {
     type: "stank",
     quantity,
     icName,
     phone,
+    subtotalPrice,
+    discountAmount,
+    couponCode,
+    couponPercent,
     totalPrice,
     customerName: icName,
     status: "Neu",
@@ -2151,7 +2290,7 @@ async function handleStankOrder(req, res) {
       `IC-Name: ${icName}\n` +
       `Handynummer / IC: ${phone}\n` +
       `STANK-Pflanzen: ${quantity}\n` +
-      `Gesamtpreis: ${totalPrice.toLocaleString("de-DE")} $`
+      `${priceBreakdownMessage(pricing)}`
   };
   Object.assign(order, trackAdminOrder(order));
   try {
@@ -2165,11 +2304,11 @@ async function handleStankOrder(req, res) {
       saveOrderLocally(order, "stank-bestellungen.json");
       send(res, 200, JSON.stringify({
         ok: true,
-        total: totalPrice,
+        ...couponPriceResponse(pricing),
         orderCount: quantity,
         channelId: STANK_ORDER_CHANNEL_ID,
         savedLocally: true,
-        message: "Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch."
+        message: `Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
       }), "application/json; charset=utf-8");
       return;
     }
@@ -2177,11 +2316,11 @@ async function handleStankOrder(req, res) {
 
     send(res, 200, JSON.stringify({
       ok: true,
-      total: totalPrice,
+      ...couponPriceResponse(pricing),
       orderCount: quantity,
       channelId: STANK_ORDER_CHANNEL_ID,
       savedLocally: false,
-      message: "STANK-Bestellung wurde erfolgreich an Discord gesendet."
+      message: `STANK-Bestellung wurde erfolgreich an Discord gesendet. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   } catch (error) {
     console.error("STANK-Bestellung fehlgeschlagen:", error.message);
@@ -2189,11 +2328,11 @@ async function handleStankOrder(req, res) {
     saveOrderLocally(order, "stank-bestellungen.json");
     send(res, 200, JSON.stringify({
       ok: true,
-      total: totalPrice,
+      ...couponPriceResponse(pricing),
       orderCount: quantity,
       channelId: STANK_ORDER_CHANNEL_ID,
       savedLocally: true,
-      message: "Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar."
+      message: `Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   }
 }
@@ -2272,18 +2411,32 @@ async function handleCustomOrder(req, res) {
     totalPrice += itemTotal;
   }
 
+  const subtotalPrice = totalPrice;
+  let pricing;
+  try {
+    pricing = priceOrderWithCoupon(subtotalPrice, payload.couponCode);
+  } catch (error) {
+    sendCouponOrderError(res, error, "Wunsch-Coupon konnte nicht geprüft werden");
+    return;
+  }
+  const { discountAmount, couponCode, couponPercent } = pricing;
+  totalPrice = pricing.totalPrice;
   const order = {
     type: "custom",
     icName,
     phone,
     items,
+    subtotalPrice,
+    discountAmount,
+    couponCode,
+    couponPercent,
     totalPrice,
     customerName: icName,
     status: "Neu",
     createdAt: new Date().toISOString(),
     message: `🛒 Neue Wunsch-Bestellung\nIC-Name: ${icName}\nHandynummer / IC: ${phone}\n` +
       items.map((item, index) => `${index + 1}. ${item.name}${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
-      `\nGesamtsumme: ${totalPrice} $`
+      `\n${priceBreakdownMessage(pricing)}`
   };
   Object.assign(order, trackAdminOrder(order));
   try {
@@ -2297,11 +2450,11 @@ async function handleCustomOrder(req, res) {
       saveOrderLocally(order, "wunsch-bestellungen.json");
       send(res, 200, JSON.stringify({
         ok: true,
-        total: totalPrice,
+        ...couponPriceResponse(pricing),
         orderCount: items.length,
         channelId: CUSTOM_ORDER_CHANNEL_ID,
         savedLocally: true,
-        message: "Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch."
+        message: `Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
       }), "application/json; charset=utf-8");
       return;
     }
@@ -2309,11 +2462,11 @@ async function handleCustomOrder(req, res) {
 
     send(res, 200, JSON.stringify({
       ok: true,
-      total: totalPrice,
+      ...couponPriceResponse(pricing),
       orderCount: items.length,
       channelId: CUSTOM_ORDER_CHANNEL_ID,
       savedLocally: false,
-      message: "Wunsch-Bestellung wurde erfolgreich an Discord gesendet."
+      message: `Wunsch-Bestellung wurde erfolgreich an Discord gesendet. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   } catch (error) {
     console.error("Wunsch-Bestellung fehlgeschlagen:", error.message);
@@ -2321,11 +2474,11 @@ async function handleCustomOrder(req, res) {
     saveOrderLocally(order, "wunsch-bestellungen.json");
     send(res, 200, JSON.stringify({
       ok: true,
-      total: totalPrice,
+      ...couponPriceResponse(pricing),
       orderCount: items.length,
       channelId: CUSTOM_ORDER_CHANNEL_ID,
       savedLocally: true,
-      message: "Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar."
+      message: `Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   }
 }
@@ -2361,6 +2514,118 @@ async function handleRequest(req, res) {
   }
   if (req.method === "POST" && pathname === "/api/wunsch-bestellung") {
     await handleCustomOrder(req, res);
+    return;
+  }
+  if (req.method === "POST" && pathname === "/api/coupons/validate") {
+    let payload;
+    try {
+      payload = JSON.parse(await readRequestBody(req, 16 * 1024));
+    } catch {
+      send(res, 400, JSON.stringify({ ok: false, message: "Ungültige Coupon-Prüfung." }), "application/json; charset=utf-8");
+      return;
+    }
+    const subtotal = Number(payload?.subtotal);
+    if (!Number.isSafeInteger(subtotal) || subtotal < 1 || typeof payload?.code !== "string" || !payload.code.trim()) {
+      send(res, 400, JSON.stringify({ ok: false, message: "Bitte Coupon-Code und Bestellwert prüfen." }), "application/json; charset=utf-8");
+      return;
+    }
+    try {
+      const pricing = priceOrderWithCoupon(subtotal, payload.code);
+      send(res, 200, JSON.stringify({
+        ok: true,
+        ...couponPriceResponse(pricing),
+        coupon: { code: pricing.couponCode, percent: pricing.couponPercent }
+      }), "application/json; charset=utf-8");
+    } catch (error) {
+      sendCouponOrderError(res, error, "Coupon-Prüfung fehlgeschlagen");
+    }
+    return;
+  }
+  const couponPath = pathname.match(/^\/api\/admin\/coupons\/([a-f0-9-]{36})$/i);
+  if ((req.method === "GET" && pathname === "/api/admin/coupons")
+    || (req.method === "POST" && pathname === "/api/admin/coupons")
+    || (req.method === "PATCH" && couponPath)) {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/coupons");
+    if (!adminSession) return;
+    if (req.method === "GET") {
+      try {
+        const coupons = readShopCoupons();
+        const usageCounts = getCouponUsageCounts(coupons);
+        send(res, 200, JSON.stringify({
+          ok: true,
+          coupons: coupons.map(coupon => couponWithUsage(coupon, usageCounts.get(coupon.code) || 0))
+        }), "application/json; charset=utf-8");
+      } catch (error) {
+        console.error("Coupons konnten nicht geladen werden:", error.message);
+        send(res, 500, JSON.stringify({ ok: false, message: "Coupons konnten nicht geladen werden." }), "application/json; charset=utf-8");
+      }
+      return;
+    }
+    let payload;
+    try {
+      payload = JSON.parse(await readRequestBody(req, 16 * 1024));
+    } catch {
+      send(res, 400, JSON.stringify({ ok: false, message: "Ungültige Coupon-Daten." }), "application/json; charset=utf-8");
+      return;
+    }
+    if (req.method === "POST") {
+      let definition;
+      try {
+        definition = validateCouponDefinition(payload);
+      } catch (error) {
+        send(res, 400, JSON.stringify({ ok: false, message: error.message }), "application/json; charset=utf-8");
+        return;
+      }
+      try {
+        const coupons = readShopCoupons();
+        if (coupons.some(coupon => coupon.code === definition.code)) {
+          send(res, 409, JSON.stringify({ ok: false, message: "Dieser Coupon-Code ist bereits vergeben." }), "application/json; charset=utf-8");
+          return;
+        }
+        if (coupons.length >= 1000) {
+          send(res, 409, JSON.stringify({ ok: false, message: "Es können höchstens 1.000 Coupons gespeichert werden." }), "application/json; charset=utf-8");
+          return;
+        }
+        const coupon = {
+          id: crypto.randomUUID(),
+          ...definition,
+          active: true,
+          createdAt: new Date().toISOString(),
+          createdBy: String(adminSession.user?.global_name || adminSession.user?.username || "Web-Admin").slice(0, 80)
+        };
+        writeAccountingJson(SHOP_COUPONS_FILE, [...coupons, coupon]);
+        send(res, 201, JSON.stringify({ ok: true, coupon: couponWithUsage(coupon, 0) }), "application/json; charset=utf-8");
+      } catch (error) {
+        console.error("Coupon konnte nicht gespeichert werden:", error.message);
+        send(res, 500, JSON.stringify({ ok: false, message: "Coupon konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+      }
+      return;
+    }
+
+    if (typeof payload?.active !== "boolean") {
+      send(res, 400, JSON.stringify({ ok: false, message: "Bitte einen gültigen Coupon-Status angeben." }), "application/json; charset=utf-8");
+      return;
+    }
+    try {
+      const coupons = readShopCoupons();
+      const coupon = coupons.find(item => item.id === couponPath[1]);
+      if (!coupon) {
+        send(res, 404, JSON.stringify({ ok: false, message: "Coupon nicht gefunden." }), "application/json; charset=utf-8");
+        return;
+      }
+      const usageCounts = getCouponUsageCounts(coupons);
+      coupon.active = payload.active;
+      coupon.updatedAt = new Date().toISOString();
+      coupon.updatedBy = String(adminSession.user?.global_name || adminSession.user?.username || "Web-Admin").slice(0, 80);
+      writeAccountingJson(SHOP_COUPONS_FILE, coupons);
+      send(res, 200, JSON.stringify({
+        ok: true,
+        coupon: couponWithUsage(coupon, usageCounts.get(coupon.code) || 0)
+      }), "application/json; charset=utf-8");
+    } catch (error) {
+      console.error("Coupon-Status konnte nicht gespeichert werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Coupon-Status konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+    }
     return;
   }
   const orderStatusPath = pathname.match(/^\/api\/admin\/orders\/([a-f0-9-]{36})$/i);
@@ -2750,6 +3015,12 @@ async function handleRequest(req, res) {
   }
   if (pathname === "/admin/accounting" || pathname === "/admin/accounting.js") {
     const adminSession = await requireCatalogAdmin(req, res, config, "/admin/accounting");
+    if (!adminSession) return;
+    serveStatic(req, res, pathname);
+    return;
+  }
+  if (pathname === "/admin/coupons" || pathname === "/admin/coupons.js") {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/coupons");
     if (!adminSession) return;
     serveStatic(req, res, pathname);
     return;

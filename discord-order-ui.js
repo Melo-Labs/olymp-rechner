@@ -64,6 +64,18 @@ function field(name, value, inline = true) {
   return { name, value: truncate(String(value || "—"), 1024) || "—", inline };
 }
 
+function priceFields(order) {
+  if (!order.couponCode || !Number.isSafeInteger(order.discountAmount) || order.discountAmount < 0) {
+    return [field("Gesamtpreis", formatMoney(order.totalPrice), false)];
+  }
+  return [
+    field("Zwischensumme", formatMoney(order.subtotalPrice)),
+    field("Coupon", `${order.couponCode} · ${order.couponPercent}% Rabatt`),
+    field("Rabatt", `−${formatMoney(order.discountAmount)}`),
+    field("Endpreis", formatMoney(order.totalPrice), false)
+  ];
+}
+
 function orderMeta(order) {
   return ORDER_TYPES[order.type] || ORDER_TYPES.custom;
 }
@@ -173,14 +185,12 @@ function buildStankOrderPayload(order) {
   return wrapPayload(order, [
     field("Pflanzen", formatCount(order.quantity)),
     field("Stückpreis", "2.000 $"),
-    field("Gesamtpreis", formatMoney(order.totalPrice))
+    ...priceFields(order)
   ], "Neue STANK-Bestellung.");
 }
 
 function buildCustomOrderPayload(order) {
-  return wrapPayload(order, [
-    field("Gesamtpreis", formatMoney(order.totalPrice), false)
-  ], itemList(order, "Bestellpositionen"));
+  return wrapPayload(order, priceFields(order), itemList(order, "Bestellpositionen"));
 }
 
 function buildSellOfferPayload(order) {

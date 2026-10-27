@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0d10">
+  <title>Coupons · OLYMP SHOP Admin</title>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    :root{--coupon-line:rgba(142,198,232,.2);--coupon-muted:#b4bec8;--coupon-text:#edf3fb;--coupon-accent:#8ec6e8;--coupon-success:#72d9b1;--coupon-error:#ff8f8f}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:#0b0d10;color:var(--coupon-text);font:16px/1.5 system-ui,sans-serif}
+    main{max-width:980px;margin:0 auto;padding:32px 16px 64px}
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:24px}.topbar strong{font-size:.9rem}.back{margin-left:auto;color:var(--coupon-text);font-weight:650;text-decoration:none}
+    h1{margin:0 0 8px;font-size:clamp(1.8rem,5vw,2.7rem);line-height:1.15}.lead,.hint,.meta{color:var(--coupon-muted);line-height:1.6}
+    .panel,.coupon-card{border:1px solid var(--coupon-line);border-radius:16px;background:linear-gradient(180deg,rgba(21,25,29,.96),rgba(10,12,14,.96));box-shadow:0 24px 32px -28px rgba(0,0,0,.85)}
+    .panel{padding:20px;margin-top:20px}.panel h2{margin:0;font-size:1.15rem}
+    .form-grid{display:grid;grid-template-columns:minmax(0,1.3fr) repeat(2,minmax(180px,.7fr));gap:14px;margin-top:16px}
+    .field{display:grid;gap:6px;min-width:0}.field label{font-weight:650}.field input,.field select,button{min-height:44px;padding:9px 12px;border:1px solid rgba(142,198,232,.24);border-radius:9px;background:#101418;color:var(--coupon-text);font:inherit}
+    .field input{text-transform:uppercase}.field small{color:var(--coupon-muted)}
+    button{font-weight:700;cursor:pointer}button:hover:not(:disabled){border-color:var(--coupon-accent)}button:disabled{opacity:.58;cursor:wait}
+    :focus-visible{outline:3px solid rgba(142,198,232,.65);outline-offset:3px}
+    .primary{margin-top:16px;background:var(--coupon-accent);border-color:var(--coupon-accent);color:#091116}
+    .status{min-height:24px;margin:12px 0 0}.status.success{color:var(--coupon-success)}.status.error{color:var(--coupon-error)}
+    .coupon-list{display:grid;gap:10px;margin-top:16px}.coupon-card{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px;box-shadow:none}
+    .coupon-code{font:700 1.15rem/1.3 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em}
+    .coupon-badge{display:inline-flex;min-height:30px;align-items:center;margin-left:10px;padding:4px 10px;border:1px solid var(--coupon-line);border-radius:999px;color:var(--coupon-accent);font-weight:700}
+    .coupon-card p{margin:6px 0 0;color:var(--coupon-muted);font-size:.9rem}.coupon-state{font-weight:700}.coupon-state.active{color:var(--coupon-success)}.coupon-state.inactive{color:var(--coupon-muted)}
+    .coupon-actions{display:grid;justify-items:end;gap:8px;flex:0 0 auto}.coupon-actions button{min-width:120px}.coupon-actions small{color:var(--coupon-muted)}
+    .empty{padding:18px 4px;color:var(--coupon-muted)}
+    @media(max-width:620px){main{padding-top:22px}.panel{padding:15px}.form-grid{grid-template-columns:1fr}.coupon-card{align-items:flex-start;flex-direction:column}.coupon-actions{width:100%;display:flex;align-items:center;justify-content:space-between}.coupon-actions button{flex:1}.coupon-badge{margin-left:6px}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+  <link rel="stylesheet" href="/admin/nav.css">
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <span class="admin-menu-slot" aria-hidden="true"></span><strong>OLYMP · SHOP ADMIN</strong>
+      <span class="admin-menu-hint">Menü links öffnen</span>
+      <a class="back" href="/admin/catalog">Shop-Produkte</a>
+    </div>
+    <h1>Coupons</h1>
+    <p class="lead">Erstelle Rabattcodes für Shop- und STANK-Bestellungen. Kunden geben den Code im Warenkorb ein; der Endpreis wird vor dem Absenden serverseitig geprüft.</p>
+    <section class="panel" aria-labelledby="create-coupon-heading">
+      <h2 id="create-coupon-heading">Coupon erstellen</h2>
+      <form id="coupon-form">
+        <div class="form-grid">
+          <div class="field">
+            <label for="coupon-code">Coupon-Code</label>
+            <input id="coupon-code" name="code" type="text" minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9-]{2,31}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Zum Beispiel OLYMP20" required>
+            <small>3–32 Buchstaben, Zahlen oder Bindestriche. Codes sind nicht groß-/kleinschreibungsabhängig.</small>
+          </div>
+          <div class="field">
+            <label for="coupon-percent">Rabatt</label>
+            <select id="coupon-percent" name="percent" required>
+              <option value="10">10 % Rabatt</option>
+              <option value="20">20 % Rabatt</option>
+              <option value="40">40 % Rabatt</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="coupon-max-uses">Maximale Einlösungen</label>
+            <input id="coupon-max-uses" name="maxUses" type="number" min="1" step="1" inputmode="numeric" placeholder="Unbegrenzt">
+            <small>Leer lassen, wenn der Code unbegrenzt oft nutzbar sein soll.</small>
+          </div>
+        </div>
+        <button id="create-coupon" class="primary" type="submit">Coupon erstellen</button>
+        <p id="coupon-status" class="status" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section class="panel" aria-labelledby="coupon-list-heading">
+      <h2 id="coupon-list-heading">Gespeicherte Coupons</h2>
+      <p class="hint">Jede eingegangene Bestellung zählt als eine Einlösung. Deaktivierte oder aufgebrauchte Codes können nicht mehr eingelöst werden.</p>
+      <div id="coupon-list" class="coupon-list" aria-live="polite">Coupons werden geladen …</div>
+    </section>
+  </main>
+  <script src="/admin/coupons.js"></script>
+  <script src="/admin/nav.js"></script>
+</body>
+</html>

@@ -21,6 +21,14 @@
     .cta { background: var(--page-accent); color: #0a1610; }
     input:focus, .quantity-control button:hover { border-color: var(--page-accent); }
     input:focus { box-shadow: 0 0 0 3px var(--page-accent-soft); }
+    .coupon-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+    .coupon-entry label { display: grid; gap: 6px; font-size: .9rem; font-weight: 600; }
+    .coupon-entry input { min-width: 0; min-height: 44px; }
+    .coupon-entry button { min-height: 44px; padding: 8px 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-elevated); color: var(--tx); font: inherit; font-weight: 700; }
+    .coupon-entry button:hover:not(:disabled) { border-color: var(--page-accent); }
+    .coupon-entry button:disabled { opacity: .58; cursor: not-allowed; }
+    .coupon-discount { color: var(--ok); }
+    @media (max-width: 420px) { .coupon-entry { grid-template-columns: 1fr; } .coupon-entry button { width: 100%; } }
   </style>
 </head>
 <body>
@@ -58,8 +66,17 @@
           </div>
           <div class="summary">
             <div class="summary-row"><span>STANK-Pflanzen</span><strong id="stank-summary-quantity">1 × 2.000 $</strong></div>
-            <div class="summary-row"><span>Gesamtpreis</span><strong id="stank-summary-total">2.000 $</strong></div>
+            <div class="summary-row"><span>Zwischensumme</span><strong id="stank-summary-subtotal">2.000 $</strong></div>
+            <div id="stank-coupon-row" class="summary-row coupon-discount" hidden><span>Coupon-Rabatt</span><strong id="stank-coupon-discount">0 $</strong></div>
+            <div class="summary-total"><span>Endpreis</span><strong id="stank-summary-total">2.000 $</strong></div>
           </div>
+          <div class="coupon-entry">
+            <label for="stank-coupon-code">Rabattcode
+              <input id="stank-coupon-code" name="couponCode" type="text" maxlength="32" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Code eingeben">
+            </label>
+            <button id="apply-stank-coupon" type="button">Einlösen</button>
+          </div>
+          <p id="stank-coupon-feedback" class="status" role="status" aria-live="polite"></p>
           <button class="cta" type="submit">STANK bestellen</button>
           <div id="stank-status" class="status" aria-live="polite"></div>
         </form>

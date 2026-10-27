@@ -5,6 +5,7 @@
   const links = [
     ['/admin/catalog', 'Shop-Produkte'],
     ['/admin/buyback', 'Ankauf-Produkte'],
+    ['/admin/coupons', 'Coupons'],
     ['/admin/orders', 'Bestellverwaltung'],
     ['/admin/accounting', 'Buchhaltung']
   ];
