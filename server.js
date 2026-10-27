@@ -58,6 +58,7 @@ const WELCOME_CHANNEL_ID = "1558193685860982880";
 const UNVERIFIED_ROLE_ID = "1558193824386261192";
 const ACCOUNTING_CHANNEL_ID = "1559327859351232603";
 const FAMILY_CATEGORY_NAME = "Familien";
+let discordGatewayClient = null;
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
 const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
@@ -1182,15 +1183,7 @@ async function handleNewFamilyInteraction(interaction) {
   }
 
   const familyName = interaction.options.getString("name", true).trim();
-  const channelName = familyName
-    .toLowerCase()
-    .replace(/ß/g, "ss")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^[-_]+|[-_]+$/g, "")
-    .slice(0, 100);
-  if (!familyName || !channelName) {
+  if (!familySlug(familyName)) {
     await interaction.reply({
       content: "Bitte gib einen gültigen Familiennamen ein.",
       ephemeral: true
@@ -1199,8 +1192,27 @@ async function handleNewFamilyInteraction(interaction) {
   }
 
   await interaction.deferReply({ ephemeral: true });
+  const result = await createFamily(interaction.guild, interaction.user.id, familyName);
+  await interaction.editReply({ content: familyCreatedMessage(familyName, result) });
+}
 
-  const guild = interaction.guild;
+function familySlug(familyName) {
+  return String(familyName || "")
+    .toLowerCase()
+    .replace(/ß/g, "ss")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .slice(0, 100);
+}
+
+function familyCreatedMessage(familyName, result) {
+  return `Familie **${familyName}** wurde eingerichtet: <#${result.channelId}>. Die Rolle <@&${result.roleId}> wurde dir zugewiesen.`;
+}
+
+async function createFamily(guild, userId, familyName) {
+  const channelName = familySlug(familyName);
   const botMember = await guild.members.fetchMe();
   const requiredPermissions = [
     [PermissionFlagsBits.ManageChannels, "Kanäle verwalten"],
@@ -1274,7 +1286,7 @@ async function handleNewFamilyInteraction(interaction) {
           ]
         },
         {
-          id: interaction.client.user.id,
+          id: botMember.id,
           allow: [
             PermissionFlagsBits.ViewChannel,
             PermissionFlagsBits.SendMessages,
@@ -1285,7 +1297,7 @@ async function handleNewFamilyInteraction(interaction) {
       ],
       reason: `Privater Familienkanal für ${familyName}`
     });
-    const member = await guild.members.fetch(interaction.user.id);
+    const member = await guild.members.fetch(userId);
     await member.roles.add(createdRole, `Familienrolle für ${familyName} zugewiesen`);
   } catch (error) {
     if (createdChannel) {
@@ -1305,9 +1317,20 @@ async function handleNewFamilyInteraction(interaction) {
     throw error;
   }
 
-  await interaction.editReply({
-    content: `Familie **${familyName}** wurde eingerichtet: <#${createdChannel.id}>. Die Rolle <@&${createdRole.id}> wurde dir zugewiesen.`
-  });
+  return { channelId: createdChannel.id, roleId: createdRole.id };
+}
+
+async function handleHttpNewFamily(payload, config) {
+  const isAdmin = (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n;
+  const familyName = String(payload.data?.options?.find(option => option.name === "name")?.value || "").trim();
+  if (payload.guild_id !== config.guildId || !isAdmin) {
+    return "Nur Server-Admins dürfen Familienkanäle erstellen.";
+  }
+  if (!familySlug(familyName)) return "Bitte gib einen gültigen Familiennamen ein.";
+  if (!discordGatewayClient?.isReady()) return "Der Bot ist noch nicht verbunden. Bitte in Kürze erneut versuchen.";
+  const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+  const result = await createFamily(guild, payload.member.user.id, familyName);
+  return familyCreatedMessage(familyName, result);
 }
 
 async function registerNewFamilyCommand(client, guildId) {
@@ -1404,6 +1427,18 @@ async function handleDiscordInteraction(req, res) {
 
   if (payload.type === 1) {
     sendJson(res, 200, { type: 1 });
+    return;
+  }
+
+  if (payload.type === 2 && payload.data?.name === "newfam") {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void handleHttpNewFamily(payload, config)
+      .catch(error => {
+        console.error("Discord-Slash-Command fehlgeschlagen:", error.message);
+        return `Die Familieneinrichtung ist fehlgeschlagen: ${error.message}`;
+      })
+      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
+      .catch(error => console.error("Discord-Antwort auf /newfam fehlgeschlagen:", error.message));
     return;
   }
 
@@ -2308,6 +2343,7 @@ function startDiscordWelcomeBot() {
   }
 
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+  discordGatewayClient = client;
   client.once(Events.ClientReady, readyClient => {
     console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
     registerNewFamilyCommand(readyClient, config.guildId).then(() => {
