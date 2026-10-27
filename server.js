@@ -30,10 +30,6 @@ const {
   isAdminOrderClosed,
   displayAdminOrderStatus,
   buildAdminOrderDiscordPayload,
-  buildMaterialOrderPayload,
-  buildStankOrderPayload,
-  buildCustomOrderPayload,
-  buildSellOfferPayload,
   parseButtonAction,
   phoneFromEmbed
 } = require("./discord-order-ui");
@@ -63,6 +59,12 @@ const ORDER_CHANNEL_ID = process.env.DISCORD_ORDER_CHANNEL_ID || "15584268704653
 const STANK_ORDER_CHANNEL_ID = "1558497954921193592";
 const CUSTOM_ORDER_CHANNEL_ID = "1558508937400291338";
 const SELL_OFFER_CHANNEL_ID = process.env.DISCORD_SELL_OFFER_CHANNEL_ID || "1558812539805110434";
+const ORDER_DELIVERY_TARGETS = {
+  material: { channelId: ORDER_CHANNEL_ID, archiveFile: "material-bestellungen.json" },
+  stank: { channelId: STANK_ORDER_CHANNEL_ID, archiveFile: "stank-bestellungen.json" },
+  custom: { channelId: CUSTOM_ORDER_CHANNEL_ID, archiveFile: "wunsch-bestellungen.json" },
+  "sell-offer": { channelId: SELL_OFFER_CHANNEL_ID, archiveFile: "ankauf-angebote.json" }
+};
 const CATALOG_AUDIT_CHANNEL_ID = "1558539114662330419";
 const WELCOME_CHANNEL_ID = "1558193685860982880";
 const UNVERIFIED_ROLE_ID = "1558193824386261192";
@@ -636,6 +638,67 @@ function recordOrderDelivery(order, deliveryStatus, discordMessage = {}, deliver
     deliveryError: deliveryError.slice(0, 240)
   });
   if (updated) Object.assign(order, updated);
+}
+
+const orderDeliveriesInProgress = new Set();
+
+function queueOrderDelivery(orderId) {
+  if (orderDeliveriesInProgress.has(orderId)) return;
+  orderDeliveriesInProgress.add(orderId);
+  setImmediate(() => {
+    void deliverOrderToDiscord(orderId)
+      .catch(error => console.error(`Hintergrundversand für Bestellung ${orderId} fehlgeschlagen:`, error.message))
+      .finally(() => orderDeliveriesInProgress.delete(orderId));
+  });
+}
+
+function respondWithQueuedOrder(res, order, fields, message) {
+  queueOrderDelivery(order.id);
+  const deliveryMessage = discordConfig().botToken
+    ? "Der Discord-Versand läuft im Hintergrund."
+    : "Die Discord-Bot-Konfiguration fehlt; der Auftrag ist lokal gespeichert.";
+  send(res, 202, JSON.stringify({
+    ok: true,
+    ...fields,
+    orderId: order.id,
+    deliveryStatus: "pending",
+    savedLocally: true,
+    message: `${message} ${deliveryMessage}`
+  }), "application/json; charset=utf-8");
+}
+
+async function deliverOrderToDiscord(orderId) {
+  let order;
+  let target;
+  try {
+    order = readAdminOrders().find(entry => entry.id === orderId);
+    if (!order || order.deliveryStatus !== "pending") return;
+    target = ORDER_DELIVERY_TARGETS[order.type];
+    if (!target) throw new Error(`Unbekannter Bestelltyp für Discord-Versand: ${order.type}`);
+    const payload = buildAdminOrderDiscordPayload(order);
+    const result = await postToDiscordChannel(payload, target.channelId, false);
+    recordOrderDelivery(order, result.method, result);
+    if (result.method === "local-only") saveOrderLocallyWithWarning(order, target.archiveFile);
+  } catch (error) {
+    console.error(`Discord-Versand für Bestellung ${orderId} fehlgeschlagen:`, error.message);
+    if (!order) return;
+    try {
+      recordOrderDelivery(order, "failed", {}, error.message || String(error));
+      if (target) saveOrderLocallyWithWarning(order, target.archiveFile);
+    } catch (persistenceError) {
+      console.error(`Lieferfehler für Bestellung ${orderId} konnte nicht gespeichert werden:`, persistenceError.message);
+    }
+  }
+}
+
+function retryPendingOrderDeliveries() {
+  try {
+    for (const order of readAdminOrders()) {
+      if (order.deliveryStatus === "pending") queueOrderDelivery(order.id);
+    }
+  } catch (error) {
+    console.error("Ausstehende Discord-Bestellungen konnten nicht geladen werden:", error.message);
+  }
 }
 
 function accountingDateKey(date = new Date()) {
@@ -1861,11 +1924,6 @@ async function finishStatusButton(payload, orderId, statusKey, actorName) {
 
 async function handleDiscordInteraction(req, res) {
   const config = discordConfig();
-  if (!config.publicKey) {
-    sendJson(res, 503, { error: "Discord interaction endpoint not configured." });
-    return;
-  }
-
   let rawBody = "";
   try {
     rawBody = await readRequestBody(req, 256 * 1024);
@@ -1891,21 +1949,37 @@ async function handleDiscordInteraction(req, res) {
     config.publicKey
   );
 
-  // Statusbuttons sofort quittieren. Discord gibt dafür nur wenige Sekunden;
-  // Signaturprüfung und Dateiverarbeitung dürfen die erste Antwort nicht verzögern.
   if (payload.type === 3 && payload.data?.component_type === 2) {
     const action = parseButtonAction(payload.data.custom_id);
-    if (action.kind === "status" && memberCanManageOrders(payload.guild_id, payload.member?.roles, config)) {
-      sendJson(res, 200, { type: 6 });
-      void (async () => {
-        if (!await verifyRequest()) {
-          console.error("Discord-Interaction mit ungültiger Signatur verworfen.");
+    sendJson(res, 200, { type: 6 });
+    void (async () => {
+      if (!config.publicKey || !await verifyRequest()) {
+        console.error("Discord-Button-Interaction mit ungültiger Signatur oder fehlendem Public Key verworfen.");
+        return;
+      }
+
+      if (action.kind === "status") {
+        if (!memberCanManageOrders(payload.guild_id, payload.member?.roles, config)) {
+          await followupInteraction(payload, "Du hast keine Berechtigung, den Bestellstatus zu ändern.");
           return;
         }
         await finishStatusButton(payload, action.orderId, action.statusKey, actorNameFromMember(payload.member));
-      })().catch(error => console.error("Discord-Statusverarbeitung fehlgeschlagen:", error.message));
-      return;
-    }
+        return;
+      }
+
+      if (action.kind === "contact") {
+        await followupInteraction(payload, contactReply(action.orderId, payload.message?.embeds?.[0]));
+        return;
+      }
+
+      await followupInteraction(payload, "Unbekannte Bestellaktion.");
+    })().catch(error => console.error("Discord-Button-Interaction fehlgeschlagen:", error.message));
+    return;
+  }
+
+  if (!config.publicKey) {
+    sendJson(res, 503, { error: "Discord interaction endpoint not configured." });
+    return;
   }
 
   if (!await verifyRequest()) {
@@ -1955,36 +2029,6 @@ async function handleDiscordInteraction(req, res) {
       })
       .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
       .catch(error => console.error(`Discord-Antwort auf /${payload.data.name} fehlgeschlagen:`, error.message));
-    return;
-  }
-
-  if (payload.type === 3 && payload.data?.component_type === 2) {
-    const action = parseButtonAction(payload.data.custom_id);
-    if (action.kind === "status") {
-      if (!memberCanManageOrders(payload.guild_id, payload.member?.roles, config)) {
-        sendJson(res, 200, {
-          type: 4,
-          data: { content: "Du hast keine Berechtigung, den Bestellstatus zu ändern.", flags: 64 }
-        });
-        return;
-      }
-      // Der autorisierte Statusbutton wurde im schnellen Pfad oben verarbeitet.
-      sendJson(res, 500, { error: "Status-Interaction konnte nicht bestätigt werden." });
-      return;
-    }
-
-    if (action.kind === "contact") {
-      sendJson(res, 200, {
-        type: 4,
-        data: { content: contactReply(action.orderId, payload.message?.embeds?.[0]), flags: 64 }
-      });
-      return;
-    }
-
-    sendJson(res, 200, {
-      type: 4,
-      data: { content: "Unbekannte Bestellaktion.", flags: 64 }
-    });
     return;
   }
 
@@ -2159,46 +2203,11 @@ async function handleMaterialOrder(req, res) {
       `Zeitstempel: ${new Date().toLocaleString("de-DE")}`
   };
   Object.assign(order, trackAdminOrder(order));
-  const discordPayload = buildMaterialOrderPayload(order);
-
-  try {
-    const result = await postToDiscordChannel(discordPayload, ORDER_CHANNEL_ID, false);
-    if (result.method === "local-only") {
-      recordOrderDelivery(order, "local-only");
-      const archiveWarning = saveMaterialOrderLocally(order);
-      send(res, 200, JSON.stringify({
-        ok: true,
-        ...couponPriceResponse(pricing),
-        orderCount: totalMaterials,
-        channelId: ORDER_CHANNEL_ID,
-        savedLocally: true,
-        message: `${archiveWarning}Bestellung wurde lokal gespeichert. Discord-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
-      }), "application/json; charset=utf-8");
-      return;
-    }
-    recordOrderDelivery(order, result.method, result);
-
-    send(res, 200, JSON.stringify({
-      ok: true,
-      ...couponPriceResponse(pricing),
-      orderCount: totalMaterials,
-      channelId: ORDER_CHANNEL_ID,
-      savedLocally: false,
-      message: `Bestellung wurde erfolgreich an Discord gesendet. ${priceBreakdownMessage(pricing)}`
-    }), "application/json; charset=utf-8");
-  } catch (error) {
-    console.error("Material-Bestellung fehlgeschlagen:", error.message);
-    recordOrderDelivery(order, "failed", {}, error.message || String(error));
-    const archiveWarning = saveMaterialOrderLocally(order);
-    send(res, 200, JSON.stringify({
-      ok: true,
-      ...couponPriceResponse(pricing),
-      orderCount: totalMaterials,
-      channelId: ORDER_CHANNEL_ID,
-      savedLocally: true,
-      message: `${archiveWarning}Bestellung wurde lokal gespeichert. Der Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
-    }), "application/json; charset=utf-8");
-  }
+  respondWithQueuedOrder(res, order, {
+    ...couponPriceResponse(pricing),
+    orderCount: totalMaterials,
+    channelId: ORDER_CHANNEL_ID
+  }, `Bestellung gespeichert. ${priceBreakdownMessage(pricing)}`);
 }
 
 function readBuybackProducts() {
@@ -2282,37 +2291,7 @@ async function handleSellOffer(req, res) {
     createdAt: new Date().toISOString()
   };
   Object.assign(sellOffer, trackAdminOrder(sellOffer));
-  const discordPayload = buildSellOfferPayload(sellOffer);
-
-  try {
-    const result = await postToDiscordChannel(discordPayload, SELL_OFFER_CHANNEL_ID, false);
-    if (result.method === "local-only") {
-      recordOrderDelivery(sellOffer, "local-only");
-      const archiveWarning = saveOrderLocallyWithWarning(sellOffer, "ankauf-angebote.json");
-      send(res, 200, JSON.stringify({
-        ok: true,
-        savedLocally: true,
-        message: `${archiveWarning}Angebot lokal gespeichert. Die Discord-Konfiguration fehlt noch.`
-      }), "application/json; charset=utf-8");
-      return;
-    }
-    recordOrderDelivery(sellOffer, result.method, result);
-
-    send(res, 200, JSON.stringify({
-      ok: true,
-      savedLocally: false,
-      message: "Dein Ankauf-Angebot wurde erfolgreich gesendet."
-    }), "application/json; charset=utf-8");
-  } catch (error) {
-    console.error("Ankauf-Angebot konnte nicht an Discord gesendet werden:", error.message);
-    recordOrderDelivery(sellOffer, "failed", {}, error.message || String(error));
-    const archiveWarning = saveOrderLocallyWithWarning(sellOffer, "ankauf-angebote.json");
-    send(res, 200, JSON.stringify({
-      ok: true,
-      savedLocally: true,
-      message: `${archiveWarning}Angebot lokal gespeichert. Der Discord-Upload war nicht verfügbar.`
-    }), "application/json; charset=utf-8");
-  }
+  respondWithQueuedOrder(res, sellOffer, {}, "Ankauf-Angebot gespeichert.");
 }
 
 async function handleStankOrder(req, res) {
@@ -2371,48 +2350,11 @@ async function handleStankOrder(req, res) {
       `${priceBreakdownMessage(pricing)}`
   };
   Object.assign(order, trackAdminOrder(order));
-  try {
-    const result = await postToDiscordChannel(
-      buildStankOrderPayload(order),
-      STANK_ORDER_CHANNEL_ID,
-      false
-    );
-    if (result.method === "local-only") {
-      recordOrderDelivery(order, "local-only");
-      const archiveWarning = saveOrderLocallyWithWarning(order, "stank-bestellungen.json");
-      send(res, 200, JSON.stringify({
-        ok: true,
-        ...couponPriceResponse(pricing),
-        orderCount: quantity,
-        channelId: STANK_ORDER_CHANNEL_ID,
-        savedLocally: true,
-        message: `${archiveWarning}Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
-      }), "application/json; charset=utf-8");
-      return;
-    }
-    recordOrderDelivery(order, result.method, result);
-
-    send(res, 200, JSON.stringify({
-      ok: true,
-      ...couponPriceResponse(pricing),
-      orderCount: quantity,
-      channelId: STANK_ORDER_CHANNEL_ID,
-      savedLocally: false,
-      message: `STANK-Bestellung wurde erfolgreich an Discord gesendet. ${priceBreakdownMessage(pricing)}`
-    }), "application/json; charset=utf-8");
-  } catch (error) {
-    console.error("STANK-Bestellung fehlgeschlagen:", error.message);
-    recordOrderDelivery(order, "failed", {}, error.message || String(error));
-    const archiveWarning = saveOrderLocallyWithWarning(order, "stank-bestellungen.json");
-    send(res, 200, JSON.stringify({
-      ok: true,
-      ...couponPriceResponse(pricing),
-      orderCount: quantity,
-      channelId: STANK_ORDER_CHANNEL_ID,
-      savedLocally: true,
-      message: `${archiveWarning}Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
-    }), "application/json; charset=utf-8");
-  }
+  respondWithQueuedOrder(res, order, {
+    ...couponPriceResponse(pricing),
+    orderCount: quantity,
+    channelId: STANK_ORDER_CHANNEL_ID
+  }, `STANK-Bestellung gespeichert. ${priceBreakdownMessage(pricing)}`);
 }
 
 async function handleCustomOrder(req, res) {
@@ -2517,48 +2459,11 @@ async function handleCustomOrder(req, res) {
       `\n${priceBreakdownMessage(pricing)}`
   };
   Object.assign(order, trackAdminOrder(order));
-  try {
-    const result = await postToDiscordChannel(
-      buildCustomOrderPayload(order),
-      CUSTOM_ORDER_CHANNEL_ID,
-      false
-    );
-    if (result.method === "local-only") {
-      recordOrderDelivery(order, "local-only");
-      const archiveWarning = saveOrderLocallyWithWarning(order, "wunsch-bestellungen.json");
-      send(res, 200, JSON.stringify({
-        ok: true,
-        ...couponPriceResponse(pricing),
-        orderCount: items.length,
-        channelId: CUSTOM_ORDER_CHANNEL_ID,
-        savedLocally: true,
-        message: `${archiveWarning}Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
-      }), "application/json; charset=utf-8");
-      return;
-    }
-    recordOrderDelivery(order, result.method, result);
-
-    send(res, 200, JSON.stringify({
-      ok: true,
-      ...couponPriceResponse(pricing),
-      orderCount: items.length,
-      channelId: CUSTOM_ORDER_CHANNEL_ID,
-      savedLocally: false,
-      message: `Wunsch-Bestellung wurde erfolgreich an Discord gesendet. ${priceBreakdownMessage(pricing)}`
-    }), "application/json; charset=utf-8");
-  } catch (error) {
-    console.error("Wunsch-Bestellung fehlgeschlagen:", error.message);
-    recordOrderDelivery(order, "failed", {}, error.message || String(error));
-    const archiveWarning = saveOrderLocallyWithWarning(order, "wunsch-bestellungen.json");
-    send(res, 200, JSON.stringify({
-      ok: true,
-      ...couponPriceResponse(pricing),
-      orderCount: items.length,
-      channelId: CUSTOM_ORDER_CHANNEL_ID,
-      savedLocally: true,
-      message: `${archiveWarning}Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
-    }), "application/json; charset=utf-8");
-  }
+  respondWithQueuedOrder(res, order, {
+    ...couponPriceResponse(pricing),
+    orderCount: items.length,
+    channelId: CUSTOM_ORDER_CHANNEL_ID
+  }, `Wunsch-Bestellung gespeichert. ${priceBreakdownMessage(pricing)}`);
 }
 
 async function handleRequest(req, res) {
@@ -3234,6 +3139,7 @@ setInterval(() => {
   void runDailyAccountingReport();
 }, 60 * 1000);
 
+setInterval(retryPendingOrderDeliveries, 30 * 1000);
 setInterval(runDailyDataBackup, 60 * 60 * 1000);
 
 server.listen(PORT, HOST, () => {
@@ -3246,6 +3152,7 @@ server.listen(PORT, HOST, () => {
   } catch (error) {
     console.error("Bestehende Bestellungen konnten nicht mit der Buchhaltung synchronisiert werden:", error.message);
   }
+  retryPendingOrderDeliveries();
   void runDailyAccountingReport();
   runDailyDataBackup();
 });

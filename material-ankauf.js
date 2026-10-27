@@ -192,7 +192,7 @@ form.addEventListener('submit', async (event) => {
     couponCode: couponInput.value.trim()
   };
 
-  statusBox.textContent = 'Bestellung wird gesendet...';
+  statusBox.textContent = 'Bestellung wird gespeichert...';
   statusBox.className = 'status';
   submitButton.disabled = true;
   couponApplyButton.disabled = true;
@@ -207,10 +207,10 @@ form.addEventListener('submit', async (event) => {
     const result = await response.json().catch(() => ({}));
 
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || 'Bestellung konnte nicht gesendet werden.');
+      throw new Error(result.message || 'Bestellung konnte nicht gespeichert werden.');
     }
 
-    statusBox.textContent = result.message || `Bestellung erfolgreich gesendet. Gesamtpreis: ${result.total} $.`;
+    statusBox.textContent = result.message || `Bestellung gespeichert. Gesamtpreis: ${result.total} $.`;
     statusBox.className = 'status success';
     form.reset();
     technicalInput.value = '0';
@@ -221,7 +221,7 @@ form.addEventListener('submit', async (event) => {
     setCouponFeedback('');
     updateSummary();
   } catch (error) {
-    statusBox.textContent = error.message || 'Fehler beim Senden der Bestellung.';
+    statusBox.textContent = error.message || 'Bestellung konnte nicht gespeichert werden.';
     statusBox.className = 'status error';
   } finally {
     submitButton.disabled = false;

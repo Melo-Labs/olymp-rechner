@@ -136,17 +136,23 @@ test("completes discounted order through signed status changes and ledger rollba
       })
     });
     const orderResult = await orderResponse.json();
-    assert.equal(orderResponse.status, 200);
+    assert.equal(orderResponse.status, 202);
     assert.equal(orderResult.subtotal, 250);
     assert.equal(orderResult.discountAmount, 25);
     assert.equal(orderResult.total, 225);
     assert.equal(orderResult.savedLocally, true);
+    assert.equal(orderResult.deliveryStatus, "pending");
+    assert.match(orderResult.message, /Discord-Bot-Konfiguration fehlt/);
 
     const orders = JSON.parse(fs.readFileSync(files.orders, "utf8"));
     assert.equal(orders.length, 1);
     const orderId = orders[0].id;
     assert.equal(orders[0].totalPrice, 225);
-    assert.equal(orders[0].deliveryStatus, "local-only");
+    await waitFor(() => {
+      const currentOrder = JSON.parse(fs.readFileSync(files.orders, "utf8"))[0];
+      return currentOrder.deliveryStatus === "local-only"
+        && fs.existsSync(path.join(archiveDirectory, "material-bestellungen.json"));
+    }, "Order delivery did not finish in the background.");
     const localOrderCopy = JSON.parse(fs.readFileSync(path.join(archiveDirectory, "material-bestellungen.json"), "utf8"));
     assert.equal(localOrderCopy[0].id, orderId);
 
@@ -164,13 +170,13 @@ test("completes discounted order through signed status changes and ledger rollba
     assert.equal(exhaustedCouponResponse.status, 400);
     assert.equal(JSON.parse(fs.readFileSync(files.orders, "utf8")).length, 1);
 
-    async function changeStatus(statusKey) {
+    async function changeStatus(statusKey, roles = ["11111111111111111"]) {
       const actorName = `Integration-${statusKey}-${crypto.randomUUID().slice(0, 8)}`;
       const payload = {
         type: 3,
         guild_id: "22222222222222222",
         member: {
-          roles: ["11111111111111111"],
+          roles,
           user: { username: actorName }
         },
         data: {
@@ -195,6 +201,9 @@ test("completes discounted order through signed status changes and ledger rollba
       assert.deepEqual(await response.json(), { type: 6 });
       return actorName;
     }
+
+    await changeStatus("accepted", []);
+    assert.equal(JSON.parse(fs.readFileSync(files.orders, "utf8"))[0].status, "Neu");
 
     const acceptedBy = await changeStatus("accepted");
     await waitFor(() => {
@@ -246,8 +255,13 @@ test("completes discounted order through signed status changes and ledger rollba
       })
     });
     const archiveFailureResult = await archiveFailureResponse.json();
-    assert.equal(archiveFailureResponse.status, 200);
-    assert.match(archiveFailureResult.message, /zusätzliche Archivkopie konnte nicht gesichert werden/);
+    assert.equal(archiveFailureResponse.status, 202);
+    assert.equal(archiveFailureResult.deliveryStatus, "pending");
+    await waitFor(
+      () => output.join("").toLowerCase().includes("zusätzliche lokale archivkopie"),
+      "Archive failure was not reported.",
+      () => output.join("")
+    );
     assert.equal(fs.readFileSync(path.join(archiveDirectory, "material-bestellungen.json"), "utf8"), damagedArchiveContent);
     assert.equal(JSON.parse(fs.readFileSync(files.orders, "utf8")).length, 2);
   } finally {

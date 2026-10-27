@@ -886,7 +886,7 @@ form.addEventListener('submit', async event => {
       : { type: 'custom', name: item.name, quantity: item.quantity, pricePerItem: item.pricePerItem });
   const icName = icNameInput.value.trim();
   const phone = phoneInput.value.trim();
-  statusBox.textContent = 'Bestellung wird gesendet …';
+  statusBox.textContent = 'Bestellung wird gespeichert …';
   statusBox.className = 'status order-status';
   submitButton.disabled = true;
 
@@ -898,10 +898,10 @@ form.addEventListener('submit', async event => {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || 'Bestellung konnte nicht gesendet werden.');
+      throw new Error(result.message || 'Bestellung konnte nicht gespeichert werden.');
     }
 
-    statusBox.textContent = result.message || `Bestellung gesendet. Gesamt: ${formatPrice(result.total)}.`;
+    statusBox.textContent = result.message || `Bestellung gespeichert. Gesamt: ${formatPrice(result.total)}.`;
     statusBox.className = 'status order-status success';
     cart = [];
     activeCoupon = null;
@@ -909,9 +909,9 @@ form.addEventListener('submit', async event => {
     form.reset();
     renderCart();
     setCouponFeedback('');
-    showCartFeedback('Bestellung wurde gesendet.', 'Der Warenkorb wurde geleert.');
+    showCartFeedback('Bestellung wurde gespeichert.', 'Der Warenkorb wurde geleert.');
   } catch (error) {
-    statusBox.textContent = error.message || 'Fehler beim Senden der Bestellung.';
+    statusBox.textContent = error.message || 'Fehler beim Speichern der Bestellung.';
     statusBox.className = 'status order-status error';
     renderCart();
   }

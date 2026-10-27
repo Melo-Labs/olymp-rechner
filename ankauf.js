@@ -176,7 +176,7 @@ form.addEventListener("submit", async event => {
     phone: document.getElementById("phone").value.trim()
   };
 
-  statusBox.textContent = "Angebot wird gesendet...";
+  statusBox.textContent = "Angebot wird gespeichert...";
   statusBox.className = "status";
   submitButton.disabled = true;
 
@@ -189,10 +189,10 @@ form.addEventListener("submit", async event => {
     const result = await response.json().catch(() => ({}));
 
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "Angebot konnte nicht gesendet werden.");
+      throw new Error(result.message || "Angebot konnte nicht gespeichert werden.");
     }
 
-    statusBox.textContent = result.message || "Dein Angebot wurde gesendet.";
+    statusBox.textContent = result.message || "Dein Angebot wurde gespeichert.";
     statusBox.className = "status success";
     form.reset();
     productsContainer.querySelectorAll(".price-item").forEach(item => {
@@ -203,7 +203,7 @@ form.addEventListener("submit", async event => {
     });
     updateSummary();
   } catch (error) {
-    statusBox.textContent = error.message || "Fehler beim Senden des Angebots.";
+    statusBox.textContent = error.message || "Fehler beim Speichern des Angebots.";
     statusBox.className = "status error";
   } finally {
     submitButton.disabled = false;
