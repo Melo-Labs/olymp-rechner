@@ -5,7 +5,16 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { verifyKey } = require("discord-interactions");
-const { AttachmentBuilder, Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js");
+const {
+  AttachmentBuilder,
+  ChannelType,
+  Client,
+  EmbedBuilder,
+  Events,
+  GatewayIntentBits,
+  PermissionFlagsBits,
+  SlashCommandBuilder
+} = require("discord.js");
 const {
   ORDER_STATUS_LABELS,
   isAdminOrderClosed,
@@ -48,6 +57,7 @@ const CATALOG_AUDIT_CHANNEL_ID = "1558539114662330419";
 const WELCOME_CHANNEL_ID = "1558193685860982880";
 const UNVERIFIED_ROLE_ID = "1558193824386261192";
 const ACCOUNTING_CHANNEL_ID = "1559327859351232603";
+const FAMILY_CATEGORY_NAME = "Familien";
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
 const LEGACY_CATALOG_AUDIT_PENDING_FILE = path.join(ROOT, "shop-audit-pending.json");
@@ -112,6 +122,7 @@ const staticFiles = new Map([
   ["/script.js", "script.js"],
   ["/style.css", "style.css"],
   ["/theme.css", "theme.css"],
+  ["/shop.css", "shop.css"],
   ["/bg.js", "bg.js"]
 ]);
 
@@ -1152,6 +1163,175 @@ function interactionMessageData(order) {
   };
 }
 
+async function handleNewFamilyInteraction(interaction) {
+  const config = discordConfig();
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId) {
+    await interaction.reply({
+      content: "Dieser Befehl kann nur auf dem konfigurierten Discord-Server verwendet werden.",
+      ephemeral: true
+    });
+    return;
+  }
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({
+      content: "Nur Server-Admins dürfen Familienkanäle erstellen.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const familyName = interaction.options.getString("name", true).trim();
+  const channelName = familyName
+    .toLowerCase()
+    .replace(/ß/g, "ss")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .slice(0, 100);
+  if (!familyName || !channelName) {
+    await interaction.reply({
+      content: "Bitte gib einen gültigen Familiennamen ein.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const guild = interaction.guild;
+  const botMember = await guild.members.fetchMe();
+  const requiredPermissions = [
+    [PermissionFlagsBits.ManageChannels, "Kanäle verwalten"],
+    [PermissionFlagsBits.ManageRoles, "Rollen verwalten"]
+  ];
+  const missingPermissions = requiredPermissions
+    .filter(([permission]) => !botMember.permissions.has(permission))
+    .map(([, label]) => label);
+  if (missingPermissions.length) {
+    throw new Error(`Dem Bot fehlen die Serverberechtigungen: ${missingPermissions.join(" und ")}.`);
+  }
+
+  const [channels, roles] = await Promise.all([
+    guild.channels.fetch(),
+    guild.roles.fetch()
+  ]);
+  const categories = channels.filter(channel =>
+    channel?.type === ChannelType.GuildCategory
+    && channel.name.toLowerCase() === FAMILY_CATEGORY_NAME.toLowerCase()
+  );
+  if (categories.size > 1) {
+    throw new Error(`Es gibt mehrere Kategorien namens „${FAMILY_CATEGORY_NAME}“. Bitte bereinige die doppelten Kategorien zuerst.`);
+  }
+
+  const category = categories.first() || null;
+  const existingRole = roles.find(role => role.name.toLowerCase() === familyName.toLowerCase());
+  const existingChannel = category
+    ? channels.find(channel =>
+      channel?.type === ChannelType.GuildText
+      && channel.parentId === category.id
+      && channel.name === channelName
+    )
+    : null;
+  if (existingRole || existingChannel) {
+    const conflicts = [
+      existingRole && "eine gleichnamige Rolle",
+      existingChannel && "einen gleichnamigen Kanal"
+    ].filter(Boolean);
+    throw new Error(`Die Familie wurde nicht erstellt: Es gibt bereits ${conflicts.join(" und ")}.`);
+  }
+
+  let createdRole;
+  let createdChannel;
+  try {
+    const familyCategory = category || await guild.channels.create({
+      name: FAMILY_CATEGORY_NAME,
+      type: ChannelType.GuildCategory,
+      reason: "Kategorie für Familienkanäle"
+    });
+    createdRole = await guild.roles.create({
+      name: familyName,
+      mentionable: false,
+      hoist: false,
+      reason: `Familienrolle für ${familyName}`
+    });
+    createdChannel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parent: familyCategory.id,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone.id,
+          deny: [PermissionFlagsBits.ViewChannel]
+        },
+        {
+          id: createdRole.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory
+          ]
+        },
+        {
+          id: interaction.client.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.ManageChannels
+          ]
+        }
+      ],
+      reason: `Privater Familienkanal für ${familyName}`
+    });
+    const member = await guild.members.fetch(interaction.user.id);
+    await member.roles.add(createdRole, `Familienrolle für ${familyName} zugewiesen`);
+  } catch (error) {
+    if (createdChannel) {
+      try {
+        await createdChannel.delete("Unvollständige Einrichtung des Familienkanals aufräumen");
+      } catch (cleanupError) {
+        console.error(`Unvollständiger Familienkanal ${createdChannel.id} konnte nicht entfernt werden:`, cleanupError.message);
+      }
+    }
+    if (createdRole) {
+      try {
+        await createdRole.delete("Unvollständige Einrichtung der Familienrolle aufräumen");
+      } catch (cleanupError) {
+        console.error(`Unvollständige Familienrolle ${createdRole.id} konnte nicht entfernt werden:`, cleanupError.message);
+      }
+    }
+    throw error;
+  }
+
+  await interaction.editReply({
+    content: `Familie **${familyName}** wurde eingerichtet: <#${createdChannel.id}>. Die Rolle <@&${createdRole.id}> wurde dir zugewiesen.`
+  });
+}
+
+async function registerNewFamilyCommand(client, guildId) {
+  const command = new SlashCommandBuilder()
+    .setName("newfam")
+    .setDescription("Erstellt einen privaten Familienkanal mit passender Rolle.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option =>
+      option
+        .setName("name")
+        .setDescription("Name der Familie")
+        .setRequired(true)
+        .setMaxLength(100)
+    )
+    .toJSON();
+  const commands = await client.application.commands.fetch({ guildId });
+  const existingCommand = commands.find(existing => existing.name === command.name);
+  if (existingCommand) {
+    await existingCommand.edit(command);
+    return;
+  }
+  await client.application.commands.create(command, guildId);
+}
+
 async function finishStatusButton(payload, orderId, statusKey, actorName) {
   try {
     const order = applyDiscordOrderStatus(orderId, statusKey, actorName, String(payload.message?.id || ""), payload);
@@ -2084,7 +2264,7 @@ async function handleRequest(req, res) {
     serveStatic(req, res, pathname);
     return;
   }
-  if (pathname === "/" || pathname === "/index.html" || pathname === "/ankauf.html" || pathname === "/ankauf.js" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/ankauf.html" || pathname === "/ankauf.js" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/shop.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {
     serveStatic(req, res, pathname === "/index.html" ? "/index.html" : pathname);
     return;
   }
@@ -2129,18 +2309,33 @@ function startDiscordWelcomeBot() {
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
   client.once(Events.ClientReady, readyClient => {
     console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
+    registerNewFamilyCommand(readyClient, config.guildId).then(() => {
+      console.log("Discord-Slash-Command /newfam ist registriert.");
+    }).catch(error => {
+      console.error("Discord-Slash-Command /newfam konnte nicht registriert werden:", error.message);
+    });
   });
   client.on(Events.Error, error => {
     console.error("Discord-Willkommensbot-Verbindung fehlgeschlagen:", error.message);
   });
   client.on(Events.InteractionCreate, interaction => {
-    handleGatewayOrderInteraction(interaction).catch(error => {
-      console.error("Discord-Button-Interaktion fehlgeschlagen:", error.message);
-      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-        interaction.reply({
-          content: "Der Bot konnte diese Bestellaktion nicht verarbeiten. Bitte die Bestellübersicht öffnen oder den Server-Admin informieren.",
-          ephemeral: true
-        }).catch(replyError => {
+    const isNewFamilyCommand = interaction.isChatInputCommand() && interaction.commandName === "newfam";
+    const handleInteraction = isNewFamilyCommand
+      ? handleNewFamilyInteraction(interaction)
+      : handleGatewayOrderInteraction(interaction);
+    handleInteraction.catch(error => {
+      const context = isNewFamilyCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
+      console.error(`${context}:`, error.message);
+      if (interaction.isRepliable() && !interaction.replied) {
+        const content = isNewFamilyCommand
+          ? `Die Familieneinrichtung ist fehlgeschlagen: ${error.message}`
+          : "Der Bot konnte diese Bestellaktion nicht verarbeiten. Bitte die Bestellübersicht öffnen oder den Server-Admin informieren.";
+        const reply = isNewFamilyCommand
+          ? (interaction.deferred ? interaction.editReply({ content }) : interaction.reply({ content, ephemeral: true }))
+          : (interaction.deferred
+            ? interaction.followUp({ content, ephemeral: true })
+            : interaction.reply({ content, ephemeral: true }));
+        reply.catch(replyError => {
           console.error("Discord-Fehlerantwort konnte nicht gesendet werden:", replyError.message);
         });
       }
