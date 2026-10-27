@@ -1,1 +1,149 @@
-PLACEHOLDER_ADMIN
+/* Admin navigation — aligned with refined design system */
+
+.admin-menu-toggle {
+  position: fixed;
+  z-index: 100;
+  top: 16px;
+  left: 16px;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-content: center;
+  gap: 5px;
+  border: 1px solid var(--bd, rgba(255, 255, 255, 0.1));
+  border-radius: 10px;
+  background: var(--card, #14171b);
+  color: var(--tx, #f0f2f4);
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.admin-menu-toggle:hover {
+  border-color: var(--bd-strong, rgba(255, 255, 255, 0.18));
+  background: var(--card-elevated, #1a1e24);
+}
+
+.admin-menu-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(228, 232, 238, 0.22);
+}
+
+.admin-menu-toggle span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 1px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.admin-menu-toggle[aria-expanded="true"] span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+.admin-menu-toggle[aria-expanded="true"] span:nth-child(2) {
+  opacity: 0;
+}
+.admin-menu-toggle[aria-expanded="true"] span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
+.admin-menu {
+  position: fixed;
+  z-index: 99;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  width: min(288px, 86vw);
+  flex-direction: column;
+  padding: 80px 14px 24px;
+  border-right: 1px solid var(--bd, rgba(255, 255, 255, 0.08));
+  background: color-mix(in srgb, var(--bg-elevated, #0f1114) 94%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 12px 0 40px rgba(0, 0, 0, 0.45);
+  transform: translateX(-104%);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.admin-menu.open {
+  transform: translateX(0);
+}
+
+.admin-menu a {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--tx-secondary, #c5c9ce);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.admin-menu a:hover,
+.admin-menu a[aria-current="page"] {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--tx, #f0f2f4);
+}
+
+.admin-menu a:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(228, 232, 238, 0.22);
+}
+
+.admin-menu .menu-title {
+  margin: 0 12px 12px;
+  color: var(--mut, #8b9098);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.admin-menu .menu-separator {
+  height: 1px;
+  margin: 12px;
+  background: var(--bd, rgba(255, 255, 255, 0.08));
+}
+
+.admin-menu-backdrop {
+  position: fixed;
+  z-index: 98;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+body.admin-menu-open {
+  overflow: hidden;
+}
+
+.admin-menu-slot {
+  min-width: 44px;
+}
+
+.admin-menu-hint {
+  margin-left: 54px;
+  color: var(--mut, #8b9098);
+  font-size: 12px;
+}
+
+@media (max-width: 620px) {
+  .admin-menu-toggle {
+    top: 12px;
+    left: 12px;
+  }
+  .admin-menu-hint {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-menu,
+  .admin-menu-toggle span {
+    transition: none !important;
+  }
+}
