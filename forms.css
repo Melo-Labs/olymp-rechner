@@ -275,3 +275,44 @@ input.quantity-input { min-width: 0; text-align: center; }
   .brand-logo { width: 48px; height: 48px; }
   .card { padding: 18px 16px; }
 }
+
+.card[data-accent="gold"] { border-color: color-mix(in srgb, var(--warn) 25%, var(--line)); }
+.card[data-accent="green"] { border-color: color-mix(in srgb, var(--ok) 25%, var(--line)); }
+.card[data-accent="sand"] { border-color: color-mix(in srgb, #c9bda9 25%, var(--line)); }
+
+.status.ok { color: var(--ok); }
+.status.err, .status.error { color: var(--bad); }
+
+.form-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.8fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 8px;
+}
+.form-shell .card { margin-top: 0; }
+.form-shell ul {
+  margin: 0;
+  padding-left: 1.15em;
+  color: var(--tx-secondary);
+  line-height: 1.55;
+  font-size: 0.92rem;
+}
+.form-shell li + li { margin-top: 6px; }
+a.secondary {
+  display: inline-flex;
+  margin-top: 14px;
+  color: var(--tx-secondary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+  transition: color 0.15s, border-color 0.15s;
+}
+a.secondary:hover {
+  color: var(--tx);
+  border-color: var(--line-strong);
+}
+@media (max-width: 720px) {
+  .form-shell { grid-template-columns: 1fr; }
+}
