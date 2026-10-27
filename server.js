@@ -123,6 +123,7 @@ const staticFiles = new Map([
   ["/style.css", "style.css"],
   ["/theme.css", "theme.css"],
   ["/shop.css", "shop.css"],
+  ["/forms.css", "forms.css"],
   ["/bg.js", "bg.js"]
 ]);
 
@@ -2264,7 +2265,7 @@ async function handleRequest(req, res) {
     serveStatic(req, res, pathname);
     return;
   }
-  if (pathname === "/" || pathname === "/index.html" || pathname === "/ankauf.html" || pathname === "/ankauf.js" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/shop.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/ankauf.html" || pathname === "/ankauf.js" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/shop.css" || pathname === "/forms.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {
     serveStatic(req, res, pathname === "/index.html" ? "/index.html" : pathname);
     return;
   }
