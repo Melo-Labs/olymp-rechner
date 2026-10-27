@@ -138,6 +138,7 @@ const staticFiles = new Map([
   ["/admin/accounting", "accounting-admin.html"],
   ["/admin/accounting.js", "accounting-admin.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
+  ["/production-utils.js", "production-utils.js"],
   ["/script.js", "script.js"],
   ["/style.css", "style.css"],
   ["/theme.css", "theme.css"],

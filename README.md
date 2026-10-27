@@ -4,6 +4,8 @@
 
 Der Rechner und die Produktverwaltung werden vom Node-Server ausgeliefert. Der Shop ist öffentlich, die Produktverwaltung erfordert eine erfolgreiche Discord-Anmeldung und die separat konfigurierte Katalog-Admin-Rolle.
 
+Im Produktionsrechner zeigt „Eigenproduktion berechnen“ für die gewählte Kategorie den kompletten Weg vom Rohstoff bis zum Endprodukt. Vorprodukte werden in vollständigen Zyklen nacheinander produziert; angezeigt werden Laufzeit und Gewinn pro Lauf sowie Hochrechnungen pro Stunde, 24-Stunden-Tag, 168-Stunden-Woche und 30-Tage-Monat bei durchgehender Produktion zum eingetragenen Maximalpreis. Nicht eingepreiste Rohstoffe werden als 0 $ ausgewiesen und in der Schätzung markiert.
+
 1. Node.js 18.17 oder neuer installieren.
 2. Im Discord Developer Portal eine Application erstellen und unter OAuth2 als Redirect URI `http://localhost:3000/auth/callback` eintragen.
 3. Die IDs der Discord-Application, des Servers und der benötigten Rolle ermitteln. Für Server- und Rollen-IDs muss der Discord-Entwicklermodus aktiviert sein.

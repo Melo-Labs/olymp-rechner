@@ -15,9 +15,9 @@ equipment:{title:"Ausrüstung",levels:[{label:"Keine Stufe",reduction:0},{label:
 autonomy:{title:"Autonomie",levels:[{label:"Keine Stufe"},{label:"Ladung +8 Std. · Zelle 24 Std."},{label:"Ladung +16 Std. · Zelle 72 Std."},{label:"Ladung +24 Std. · Zelle 168 Std."}]},
 storage:{title:"Speicher",levels:[{label:"Keine Stufe"},{label:"25 % größer · Zelle 24 Std."},{label:"50 % größer · Zelle 72 Std."},{label:"100 % größer · Zelle 168 Std."}]}
 };
-function fresh(){const s={hrs:24,upgrades:{equipment:0,autonomy:0,storage:0},P:{}};CATS.forEach(c=>c.items.forEach((it,i)=>{s.P[c.id+i]={price:it[1],q:it[3]??1,h:it[4]??1,m:(it[5]||[]).map(r=>({n:r[0],a:r[1],p:Number(r[2])||0}))}}));return s}
+function fresh(){const s={hrs:24,chainEnabled:false,upgrades:{equipment:0,autonomy:0,storage:0},P:{}};CATS.forEach(c=>c.items.forEach((it,i)=>{s.P[c.id+i]={price:it[1],q:it[3]??1,h:it[4]??1,m:(it[5]||[]).map(r=>({n:r[0],a:r[1],p:Number(r[2])||0}))}}));return s}
 let S=fresh();
-try{const s=JSON.parse(localStorage.getItem(KEY)||"null");if(s&&s.P){S.hrs=s.hrs||24;Object.assign(S.upgrades,s.upgrades||{});for(const k in S.P)if(s.P[k]&&Array.isArray(s.P[k].m))S.P[k]=s.P[k]}}catch(e){}
+try{const s=JSON.parse(localStorage.getItem(KEY)||"null");if(s&&s.P){S.hrs=s.hrs||24;if(typeof s.chainEnabled==="boolean")S.chainEnabled=s.chainEnabled;Object.assign(S.upgrades,s.upgrades||{});for(const k in s.P)if(s.P[k]&&Array.isArray(s.P[k].m))S.P[k]=s.P[k]}}catch(e){}
 let page="geld";try{const h=location.hash.slice(1);if(CATS.some(c=>c.id===h))page=h}catch(e){}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -36,6 +36,42 @@ return cost/(Number(p.q)||1);
 }
 function materialUnitCost(r,stack=new Set()){
 const id=productId(r.n);return id&&!stack.has(id)?itemUnitCost(id,stack):(Number(r.p)||0);
+}
+const productionUtils=window.ProductionUtils;
+function productionProducts(){
+const products={};
+for(const c of CATS)for(let index=0;index<c.items.length;index++){
+const id=c.id+index,p=S.P[id];
+products[id]={name:c.items[index][0],price:Number(p.price),quantityPerCycle:Number(p.q),cycleHours:Number(p.h)*cycleFactor(),materials:(p.m||[]).map(material=>({name:material.n,quantity:Number(material.a)||0,productId:productId(material.n),unitCost:materialUnitCost(material)}))};
+}
+return products;
+}
+function selfProductionSummary(category){
+const products=productionProducts();
+const categoryIds=category.items.map((_,index)=>category.id+index);
+const runs=productionUtils.terminalProductIds(products,categoryIds).map(id=>{
+const product=products[id],result=productionUtils.calculateProductionRun(products,id);
+if(result.error)return{error:result.error};
+const revenue=product.price*product.quantityPerCycle;
+if(!Number.isFinite(revenue))return{error:"Der Verkaufserlös kann nicht berechnet werden."};
+return{id,name:product.name,quantity:product.quantityPerCycle,revenue,cost:result.cost,profit:revenue-result.cost,hours:result.hours,chain:result.chain,missing:result.missing};
+});
+const failed=runs.find(run=>run.error);
+if(failed)return`<h2>Eigenproduktion</h2><p class="chain-warning" role="status">${esc(failed.error)}</p>`;
+const totalHours=runs.reduce((sum,run)=>sum+run.hours,0),totalProfit=runs.reduce((sum,run)=>sum+run.profit,0),profitPerHour=totalHours>0?totalProfit/totalHours:0;
+const missing=[...new Set(runs.flatMap(run=>run.missing))];
+return`<h2>Eigenproduktion · ${esc(category.t)}</h2>
+<p class="chain-copy">Vom Rohstoff bis zum Endprodukt. Vorprodukte werden in vollständigen Zyklen selbst hergestellt und nacheinander produziert. Pro Endprodukt wird eine Charge gerechnet; Produktionsreste bleiben auf Lager und werden nicht als Verkauf gezählt. Die Hochrechnung setzt durchgehende Produktion und Verkauf zum eingetragenen Maximalpreis voraus.</p>
+<div class="chain-summary">
+<div class="chain-stat"><span>Gesamtdauer des Laufs</span><strong>${duration(totalHours)}</strong></div>
+<div class="chain-stat"><span>Gewinn pro Lauf</span><strong class="${cls(totalProfit)}">${money(totalProfit)}</strong></div>
+<div class="chain-stat"><span>Gewinn / Stunde</span><strong class="${cls(profitPerHour)}">${money(profitPerHour)}</strong></div>
+<div class="chain-stat"><span>Gewinn / Tag · 24 Std.</span><strong class="${cls(profitPerHour*24)}">${money(profitPerHour*24)}</strong></div>
+<div class="chain-stat"><span>Gewinn / Woche · 168 Std.</span><strong class="${cls(profitPerHour*168)}">${money(profitPerHour*168)}</strong></div>
+<div class="chain-stat"><span>Gewinn / 30 Tage · 720 Std.</span><strong class="${cls(profitPerHour*720)}">${money(profitPerHour*720)}</strong></div>
+</div>
+<div class="chain-runs">${runs.map(run=>`<article class="chain-run"><h3>${esc(run.name)}</h3><p class="chain-path">Rohstoffe → ${run.chain.map(esc).join(" → ")}</p><div class="kv"><span>Menge je Endprodukt-Charge</span><span>${fmt(run.quantity)}</span><span>Dauer der Kette</span><span>${duration(run.hours)}</span><span>Umsatz</span><span>${money(run.revenue)}</span><span>Kosten aller Produktionsstufen</span><span>${money(run.cost)}</span><span>Gewinn pro Charge</span><span class="${cls(run.profit)}">${money(run.profit)}</span></div></article>`).join("")}</div>
+${missing.length?`<p class="chain-warning" role="status">Für ${missing.map(esc).join(", ")} ist aktuell kein Preis hinterlegt. Diese Rohstoffe werden mit 0 $ gerechnet; die Gewinnschätzung kann dadurch zu hoch sein.</p>`:""}`;
 }
 
 function nav(){
@@ -80,7 +116,8 @@ for (const [idx, item] of c.items.entries()) {
   if (item[4] != null) S.P[key].h = item[4];
 }
 const upgradePanel=`<details class="panel upgrades"><summary>Labor-Upgrades</summary><div class="upgrade-grid">${Object.entries(LAB_UPGRADES).map(([key,upgrade])=>`<label class="upgrade-control"><span>${upgrade.title}</span><select data-upgrade="${key}" aria-label="${upgrade.title}">${upgrade.levels.map((level,index)=>`<option value="${index}" ${S.upgrades[key]===index?"selected":""}>${level.label}</option>`).join("")}</select></label>`).join("")}</div></details>`;
-$("view").innerHTML=upgradePanel+`<section class="panel"><div class="lbl">Verkaufspreise: Maximalpreis · Hochrechnung: ${fmt(S.hrs)} Std.</div></section>
+$("view").innerHTML=upgradePanel+`<section class="panel"><div class="lbl">Verkaufspreise: Maximalpreis · Hochrechnung: ${fmt(S.hrs)} Std.</div><div class="btns"><button id="chain-toggle" class="primary chain-toggle" type="button" aria-controls="chain-forecast" aria-pressed="${S.chainEnabled}">${S.chainEnabled?"Eigenproduktion ausblenden":"Eigenproduktion berechnen"}</button></div></section>
+<section class="panel chain-forecast" id="chain-forecast" ${S.chainEnabled?"":"hidden"}></section>
 <section class="panel best-box" id="best"></section><section class="cards">${c.items.map((it,i)=>card(c,it,i)).join("")}</section>`;
 calc();
 }
@@ -103,6 +140,11 @@ $("best").innerHTML=`<div><div class="lbl">Lohnt sich am meisten</div><div class
 <div><div class="lbl">Gewinn / Std.</div><div class="big ${cls(best.ph)}">${money(best.ph)}</div></div>
 <div><div class="lbl">Gewinn / ${fmt(H)} Std.</div><div class="big ${cls(best.pz)}">${money(best.pz)}</div></div>
 <div><div class="lbl">Gewinn / Zyklus</div><div class="big">${money(best.prof)}</div></div>`;
+const chainToggle=$("chain-toggle"),chainForecast=$("chain-forecast");
+chainToggle.setAttribute("aria-pressed",String(S.chainEnabled));
+chainToggle.textContent=S.chainEnabled?"Eigenproduktion ausblenden":"Eigenproduktion berechnen";
+chainForecast.hidden=!S.chainEnabled;
+if(S.chainEnabled)chainForecast.innerHTML=selfProductionSummary(c);
 }
 document.addEventListener("input",e=>{
 const t=e.target,v=parseFloat(t.value)||0;
@@ -122,8 +164,9 @@ if(t.dataset.upgrade===undefined)return;
 S.upgrades[t.dataset.upgrade]=Number(t.value)||0;save();render();
 });
 document.addEventListener("click",e=>{
-const b=e.target.closest("[data-nav],#burger,#ov");if(!b)return;
+const b=e.target.closest("[data-nav],#burger,#ov,#chain-toggle");if(!b)return;
 const d=b.dataset;
+if(b.id==="chain-toggle"){S.chainEnabled=!S.chainEnabled;save();calc();return}
 if(b.id==="burger"){document.body.classList.toggle("open");return}
 if(b.id==="ov"){document.body.classList.remove("open");return}
 if(d.nav){e.preventDefault();page=d.nav;try{history.replaceState(null,"","#"+page)}catch(x){}document.body.classList.remove("open");render();window.scrollTo(0,0);return}
