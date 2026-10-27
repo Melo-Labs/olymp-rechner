@@ -219,6 +219,32 @@ test("completes discounted order through signed status changes and ledger rollba
       return actorName;
     }
 
+    async function invokeHealthCommand(name) {
+      const payload = {
+        type: 2,
+        guild_id: "22222222222222222",
+        member: { roles: ["11111111111111111"] },
+        data: { name, options: [] }
+      };
+      const body = JSON.stringify(payload);
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const signature = crypto.sign(null, Buffer.from(timestamp + body), privateKey).toString("hex");
+      const response = await fetch(`${baseUrl}/api/discord-interactions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-signature-ed25519": signature,
+          "x-signature-timestamp": timestamp
+        },
+        body
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { type: 5, data: { flags: 64 } });
+    }
+
+    await invokeHealthCommand("livez");
+    await invokeHealthCommand("healthz");
+
     await changeStatus("accepted", []);
     assert.equal(JSON.parse(fs.readFileSync(files.orders, "utf8"))[0].status, "Neu");
 

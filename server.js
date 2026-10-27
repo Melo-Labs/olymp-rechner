@@ -1671,6 +1671,52 @@ function accountingCashMessage(period) {
   return lines.join("\n");
 }
 
+function formatHealthReport(report) {
+  const stateLabel = {
+    ok: "bereit",
+    degraded: "eingeschränkt",
+    unavailable: "nicht verfügbar"
+  };
+  const checkLabel = {
+    discord: "Discord-Bot",
+    storage: "Datenspeicher",
+    orders: "Bestellversand"
+  };
+  const lines = [
+    `**Serverstatus: ${report.status === "ok" ? "Alles in Ordnung" : "Eingeschränkt"}**`,
+    ...Object.entries(report.checks).map(([name, status]) =>
+      `${checkLabel[name] || name}: ${stateLabel[status] || status}`
+    ),
+    `Geprüft: ${new Date(report.checkedAt).toLocaleString("de-DE")}`
+  ];
+  return lines.join("\n");
+}
+
+function healthCommandMessage(commandName) {
+  if (commandName === "livez") return "Der Webserver ist erreichbar. Liveness-Prüfung: bereit.";
+  return formatHealthReport(getHealthReport());
+}
+
+async function handleHealthCommandInteraction(interaction) {
+  const config = discordConfig();
+  const roleIds = interaction.member?.roles?.cache
+    ? [...interaction.member.roles.cache.keys()]
+    : [];
+  if (!memberCanManageOrders(interaction.guildId, roleIds, config)) {
+    await interaction.reply({
+      content: "Nur Mitglieder mit der Katalog-Admin-Rolle dürfen den Serverstatus prüfen.",
+      ephemeral: true
+    });
+    return;
+  }
+  if (interaction.commandName === "livez") {
+    await interaction.reply({ content: healthCommandMessage("livez"), ephemeral: true });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  await interaction.editReply({ content: healthCommandMessage("healthz") });
+}
+
 function correctManualAccountingEntry(guildId, roleIds, id, reason, replacement, bookedBy) {
   const config = discordConfig();
   if (!memberCanManageOrders(guildId, roleIds, config)) {
@@ -1789,6 +1835,14 @@ async function handleHttpCash(payload, config) {
   return accountingCashMessage(options.zeitraum);
 }
 
+async function handleHttpHealthCommand(payload, commandName, config) {
+  const roleIds = Array.isArray(payload.member?.roles) ? payload.member.roles : [];
+  if (!memberCanManageOrders(payload.guild_id, roleIds, config)) {
+    return "Nur Mitglieder mit der Katalog-Admin-Rolle dürfen den Serverstatus prüfen.";
+  }
+  return healthCommandMessage(commandName);
+}
+
 async function handleHttpVoid(payload) {
   const roleIds = Array.isArray(payload.member?.roles) ? payload.member.roles : [];
   const options = accountingOptions(payload);
@@ -1898,8 +1952,18 @@ async function registerNewFamilyCommand(client, guildId) {
         { name: "Ausgabe", value: "expense" }
       ))
     .toJSON();
+  const livenessCommand = new SlashCommandBuilder()
+    .setName("livez")
+    .setDescription("Prüft, ob der Webserver erreichbar ist.")
+    .setDMPermission(false)
+    .toJSON();
+  const healthCommand = new SlashCommandBuilder()
+    .setName("healthz")
+    .setDescription("Prüft Discord, Speicher und den Bestellversand.")
+    .setDMPermission(false)
+    .toJSON();
 
-  for (const command of [familyCommand, manualBookingCommand, cashCommand, voidCommand]) {
+  for (const command of [familyCommand, manualBookingCommand, cashCommand, voidCommand, livenessCommand, healthCommand]) {
     const existingCommand = commands.find(existing => existing.name === command.name);
     if (existingCommand) {
       await existingCommand.edit(command);
@@ -2033,6 +2097,16 @@ async function handleDiscordInteraction(req, res) {
       })
       .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
       .catch(error => console.error(`Discord-Antwort auf /${payload.data.name} fehlgeschlagen:`, error.message));
+    return;
+  }
+
+  if (payload.type === 2 && ["livez", "healthz"].includes(payload.data?.name)) {
+    const commandName = payload.data.name;
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void Promise.resolve()
+      .then(() => handleHttpHealthCommand(payload, commandName, config))
+      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
+      .catch(error => console.error(`Discord-Antwort auf /${commandName} fehlgeschlagen:`, error.message));
     return;
   }
 
@@ -3142,7 +3216,7 @@ function startDiscordWelcomeBot() {
   client.once(Events.ClientReady, readyClient => {
     console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
     registerNewFamilyCommand(readyClient, config.guildId).then(() => {
-      console.log("Discord-Slash-Commands /newfam und /buchung sind registriert.");
+      console.log("Discord-Slash-Commands /newfam, /buchung, /kasse, /storno, /livez und /healthz sind registriert.");
     }).catch(error => {
       console.error("Discord-Slash-Commands konnten nicht registriert werden:", error.message);
     });
@@ -3155,6 +3229,8 @@ function startDiscordWelcomeBot() {
     const isManualBookingCommand = interaction.isChatInputCommand() && interaction.commandName === "buchung";
     const isCashCommand = interaction.isChatInputCommand() && interaction.commandName === "kasse";
     const isVoidCommand = interaction.isChatInputCommand() && interaction.commandName === "storno";
+    const isLivenessCommand = interaction.isChatInputCommand() && interaction.commandName === "livez";
+    const isHealthCommand = interaction.isChatInputCommand() && interaction.commandName === "healthz";
     const handleInteraction = isNewFamilyCommand
       ? handleNewFamilyInteraction(interaction)
       : isManualBookingCommand
@@ -3163,9 +3239,11 @@ function startDiscordWelcomeBot() {
           ? handleCashInteraction(interaction)
           : isVoidCommand
             ? handleVoidInteraction(interaction)
+            : isLivenessCommand || isHealthCommand
+              ? handleHealthCommandInteraction(interaction)
         : handleGatewayOrderInteraction(interaction);
     handleInteraction.catch(error => {
-      const isSlashCommand = isNewFamilyCommand || isManualBookingCommand || isCashCommand || isVoidCommand;
+      const isSlashCommand = isNewFamilyCommand || isManualBookingCommand || isCashCommand || isVoidCommand || isLivenessCommand || isHealthCommand;
       const context = isSlashCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
       console.error(`${context}:`, error.message);
       if (interaction.isRepliable() && !interaction.replied) {

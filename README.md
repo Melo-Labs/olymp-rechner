@@ -53,7 +53,7 @@ Nach dem nächsten `git push` erscheint im Discord-Channel eine Nachricht mit Re
 
 ## Health-Monitoring
 
-`/livez` ist die Liveness-Prüfung: Sie antwortet mit HTTP 200, solange der Webserver Anfragen verarbeitet. `/healthz` prüft zusätzlich die Discord-Bot-Verbindung, ob die wichtigen Datendateien les- und beschreibbar sind, sowie fehlgeschlagene, lokal gespeicherte oder länger als zwei Minuten ausstehende Bestellungen. Bei Problemen liefert `/healthz` HTTP 503 und nur aggregierte Statuswerte, keine Bestelldaten oder Fehlerdetails. Der Bericht wird fünf Sekunden zwischengespeichert.
+`/livez` ist die Liveness-Prüfung: Sie antwortet mit HTTP 200, solange der Webserver Anfragen verarbeitet. `/healthz` prüft zusätzlich die Discord-Bot-Verbindung, ob die wichtigen Datendateien les- und beschreibbar sind, sowie fehlgeschlagene, lokal gespeicherte oder länger als zwei Minuten ausstehende Bestellungen. Bei Problemen liefert `/healthz` HTTP 503 und nur aggregierte Statuswerte, keine Bestelldaten oder Fehlerdetails. Der Bericht wird fünf Sekunden zwischengespeichert. Beide Prüfungen sind außerdem als Discord-Slash-Commands für Mitglieder mit der Katalog-Admin-Rolle verfügbar.
 
 Für Hosting-Neustartprüfungen `/livez` verwenden, damit ein vorübergehender Discord-Ausfall nicht unnötig den gesamten Webserver neu startet. `/healthz` eignet sich für Monitoring und Benachrichtigungen bei einem degradierten Zustand.
 
