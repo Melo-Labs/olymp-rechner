@@ -1,6 +1,5 @@
 /* =========================================================
-   OLYMP Design System — Apple HIG inspired craft
-   Refined dark identity, clearer hierarchy, better a11y
+   OLYMP Design System v2 — visibly refined dark UI
    ========================================================= */
 
 @font-face {
@@ -40,67 +39,46 @@
 }
 
 :root {
-  /* Typography */
   --display: "Orbitron", "Eurostile", system-ui, sans-serif;
   --body: "Exo 2", system-ui, -apple-system, sans-serif;
 
-  /* Surfaces — tighter, more intentional dark scale */
-  --bg: #090a0c;
-  --bg-elevated: #0f1114;
-  --card: #14171b;
-  --card-elevated: #1a1e24;
-  --card-hover: #1e2329;
+  --bg: #07080a;
+  --bg-elevated: #0c0e12;
+  --surface: #12151a;
+  --surface-2: #181c23;
+  --surface-3: #1e2430;
 
-  /* Text */
-  --tx: #f0f2f4;
-  --tx-secondary: #c5c9ce;
-  --mut: #8b9098;
-  --mut-strong: #a8adb5;
+  --tx: #f2f4f6;
+  --tx-secondary: #b8bec6;
+  --mut: #7e8692;
 
-  /* Borders & dividers */
-  --bd: rgba(255, 255, 255, 0.08);
-  --bd-strong: rgba(255, 255, 255, 0.14);
-  --bd-focus: rgba(228, 232, 238, 0.55);
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --focus: rgba(255, 255, 255, 0.28);
 
-  /* Accent — cool neutral, not neon */
-  --ac: #e4e8ee;
-  --ac-soft: rgba(228, 232, 238, 0.12);
+  --ac: #e8ecf1;
+  --ac-dim: rgba(232, 236, 241, 0.1);
   --ac-x: #0a0b0d;
 
-  /* Semantic */
-  --ok: #6dd4a0;
-  --ok-bg: rgba(109, 212, 160, 0.12);
-  --bad: #ff7b7b;
-  --bad-bg: rgba(255, 123, 123, 0.12);
-  --warn: #e8c07a;
+  --ok: #5dce9a;
+  --bad: #ff7a7a;
+  --warn: #e0b35c;
+  --info: #6cb6e3;
 
-  /* Shadows — softer, layered */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.55);
-  --shadow-lg: 0 20px 40px -20px rgba(0, 0, 0, 0.7);
-  --shadow-focus: 0 0 0 3px rgba(228, 232, 238, 0.22);
+  --r: 16px;
+  --r-sm: 10px;
+  --r-lg: 22px;
 
-  /* Radii — consistent system */
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 14px;
-  --r-xl: 18px;
-  --r-full: 999px;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.35);
 
-  /* Spacing scale */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
-  /* Motion */
-  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --duration: 0.18s;
-  --duration-slow: 0.28s;
+  /* legacy aliases used by older pages */
+  --card: var(--surface);
+  --card2: var(--surface-2);
+  --bd: #2a3038;
+  --acx: var(--ac-x);
 }
 
 html {
@@ -109,7 +87,6 @@ html {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ---------- Background (calmer) ---------- */
 .bg {
   position: fixed;
   inset: 0;
@@ -117,85 +94,53 @@ html {
   overflow: hidden;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 100% 80% at 50% 0%, #15181e 0%, transparent 55%),
-    radial-gradient(ellipse 80% 60% at 80% 100%, #12141a 0%, transparent 50%),
+    radial-gradient(ellipse 90% 55% at 50% -10%, #1a2030 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, #12161f 0%, transparent 45%),
     var(--bg);
 }
 
-/* Soft ambient glow — reduced intensity */
-.aurora {
-  position: absolute;
-  inset: 0;
-}
+.aurora { position: absolute; inset: 0; }
 .aurora i {
   position: absolute;
   border-radius: 50%;
-  filter: blur(100px);
+  filter: blur(120px);
+  opacity: 0.22;
   will-change: transform;
-  opacity: 0.28;
 }
 .aurora i:nth-child(1) {
-  width: 50vmax;
-  height: 50vmax;
-  left: -12vmax;
-  top: -18vmax;
-  background: radial-gradient(circle, rgba(140, 150, 165, 0.4), transparent 70%);
-  animation: drift1 40s ease-in-out infinite alternate;
+  width: 48vmax; height: 48vmax; left: -10vmax; top: -16vmax;
+  background: radial-gradient(circle, rgba(120, 140, 180, 0.5), transparent 70%);
+  animation: drift1 45s ease-in-out infinite alternate;
 }
 .aurora i:nth-child(2) {
-  width: 42vmax;
-  height: 42vmax;
-  right: -14vmax;
-  top: 15vh;
-  background: radial-gradient(circle, rgba(90, 95, 105, 0.35), transparent 70%);
-  animation: drift2 48s ease-in-out infinite alternate;
+  width: 40vmax; height: 40vmax; right: -12vmax; top: 20vh;
+  background: radial-gradient(circle, rgba(80, 90, 110, 0.45), transparent 70%);
+  animation: drift2 52s ease-in-out infinite alternate;
 }
 .aurora i:nth-child(3) {
-  width: 38vmax;
-  height: 38vmax;
-  left: 25%;
-  bottom: -20vmax;
-  background: radial-gradient(circle, rgba(120, 110, 100, 0.28), transparent 70%);
-  animation: drift3 55s ease-in-out infinite alternate;
+  width: 36vmax; height: 36vmax; left: 30%; bottom: -18vmax;
+  background: radial-gradient(circle, rgba(100, 90, 80, 0.35), transparent 70%);
+  animation: drift3 58s ease-in-out infinite alternate;
 }
+@keyframes drift1 { to { transform: translate3d(8vmax, 6vmax, 0) scale(1.06); } }
+@keyframes drift2 { to { transform: translate3d(-6vmax, 8vmax, 0) scale(0.95); } }
+@keyframes drift3 { to { transform: translate3d(-8vmax, -5vmax, 0) scale(1.08); } }
 
-@keyframes drift1 {
-  to { transform: translate3d(10vmax, 8vmax, 0) scale(1.08); }
-}
-@keyframes drift2 {
-  to { transform: translate3d(-8vmax, 10vmax, 0) scale(0.94); }
-}
-@keyframes drift3 {
-  to { transform: translate3d(-10vmax, -6vmax, 0) scale(1.1); }
-}
-
-/* Subtle grain / dots — very quiet */
 .dots {
   position: absolute;
   inset: 0;
-  background: radial-gradient(rgba(200, 205, 210, 0.12) 1px, transparent 1.5px) 0 0 / 32px 32px;
-  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000, transparent 80%);
-  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000, transparent 80%);
-  opacity: 0.55;
+  background: radial-gradient(rgba(200, 210, 220, 0.1) 1px, transparent 1.4px) 0 0 / 28px 28px;
+  mask-image: radial-gradient(ellipse 70% 55% at 50% 35%, #000, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 35%, #000, transparent 75%);
+  opacity: 0.5;
 }
-
-#net {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0.18;
-}
-
+#net { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.12; }
 .vignette {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.75));
+  background: radial-gradient(ellipse at center, transparent 35%, rgba(0, 0, 0, 0.8));
 }
 
-/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  .aurora i {
-    animation: none !important;
-  }
+  .aurora i { animation: none !important; }
 }
