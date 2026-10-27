@@ -16,6 +16,8 @@ const {
   SlashCommandBuilder
 } = require("discord.js");
 const { CATEGORY_LABELS, createLedger, periodRange, shiftDateKey, summarize } = require("./ledger");
+const { createDataBackup } = require("./data-backups");
+const { writeJsonAtomically } = require("./json-store");
 const {
   calculateCouponPrice,
   couponUsesRemaining,
@@ -82,12 +84,26 @@ const SHOP_CONTENT = {
     }
   ]
 };
-const ACCOUNTING_REPORTS_FILE = path.join(ROOT, "data", "accounting-reports.json");
+const ACCOUNTING_REPORTS_FILE = process.env.ACCOUNTING_REPORTS_FILE
+  ? (path.isAbsolute(process.env.ACCOUNTING_REPORTS_FILE)
+    ? process.env.ACCOUNTING_REPORTS_FILE
+    : path.resolve(ROOT, process.env.ACCOUNTING_REPORTS_FILE))
+  : path.join(ROOT, "data", "accounting-reports.json");
 const ACCOUNTING_LEDGER_FILE = process.env.ACCOUNTING_LEDGER_FILE
   ? (path.isAbsolute(process.env.ACCOUNTING_LEDGER_FILE)
     ? process.env.ACCOUNTING_LEDGER_FILE
     : path.resolve(ROOT, process.env.ACCOUNTING_LEDGER_FILE))
   : path.join(ROOT, "data", "accounting-ledger.json");
+const LOCAL_ORDER_LOG_DIR = process.env.LOCAL_ORDER_LOG_DIR
+  ? (path.isAbsolute(process.env.LOCAL_ORDER_LOG_DIR)
+    ? process.env.LOCAL_ORDER_LOG_DIR
+    : path.resolve(ROOT, process.env.LOCAL_ORDER_LOG_DIR))
+  : ROOT;
+const DATA_BACKUP_DIR = process.env.DATA_BACKUP_DIR
+  ? (path.isAbsolute(process.env.DATA_BACKUP_DIR)
+    ? process.env.DATA_BACKUP_DIR
+    : path.resolve(ROOT, process.env.DATA_BACKUP_DIR))
+  : path.join(ROOT, "data", "backups");
 const accountingLedger = createLedger(ACCOUNTING_LEDGER_FILE);
 
 function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
@@ -517,16 +533,23 @@ function serveStatic(req, res, pathname) {
 }
 
 function saveOrderLocally(order, fileName) {
-  const logPath = path.join(ROOT, fileName);
+  const logPath = path.join(LOCAL_ORDER_LOG_DIR, path.basename(fileName));
   let list = [];
-  try {
-    if (fs.existsSync(logPath)) {
+  if (fs.existsSync(logPath)) {
+    try {
       const existing = fs.readFileSync(logPath, "utf8");
-      list = JSON.parse(existing || "[]");
-      if (!Array.isArray(list)) list = [];
+      list = JSON.parse(existing);
+    } catch (error) {
+      const readError = new Error(`Lokales Bestellprotokoll ${path.basename(logPath)} ist beschädigt und wurde nicht überschrieben.`);
+      readError.code = "ORDER_LOG_READ_FAILED";
+      readError.cause = error;
+      throw readError;
     }
-  } catch {
-    list = [];
+    if (!Array.isArray(list)) {
+      const invalidError = new Error(`Lokales Bestellprotokoll ${path.basename(logPath)} enthält keine Bestellliste.`);
+      invalidError.code = "ORDER_LOG_INVALID";
+      throw invalidError;
+    }
   }
 
   list.push({
@@ -534,12 +557,22 @@ function saveOrderLocally(order, fileName) {
     ...order
   });
 
-  fs.writeFileSync(logPath, JSON.stringify(list, null, 2), "utf8");
+  writeAccountingJson(logPath, list);
   return logPath;
 }
 
 function saveMaterialOrderLocally(order) {
-  return saveOrderLocally(order, "material-bestellungen.json");
+  return saveOrderLocallyWithWarning(order, "material-bestellungen.json");
+}
+
+function saveOrderLocallyWithWarning(order, fileName) {
+  try {
+    saveOrderLocally(order, fileName);
+    return "";
+  } catch (error) {
+    console.error(`Zusätzliche lokale Archivkopie für Bestellung ${order.id} fehlgeschlagen:`, error.message);
+    return "Die Bestellung ist in der Adminverwaltung gespeichert, aber die zusätzliche Archivkopie konnte nicht gesichert werden. ";
+  }
 }
 
 function readAdminOrders() {
@@ -556,12 +589,12 @@ function readAdminOrders() {
 }
 
 function writeAdminOrders(orders) {
-  adminOrdersCache = orders;
   writeAccountingJson(ADMIN_ORDERS_FILE, orders);
+  adminOrdersCache = orders;
 }
 
 function trackAdminOrder(order) {
-  const orders = readAdminOrders();
+  const orders = readAdminOrders().slice();
   const tracked = {
     ...order,
     id: crypto.randomUUID(),
@@ -574,14 +607,16 @@ function trackAdminOrder(order) {
 }
 
 function updateAdminOrder(orderId, updates) {
-  const orders = readAdminOrders();
-  const index = orders.findIndex(order => order.id === orderId);
+  const currentOrders = readAdminOrders();
+  const index = currentOrders.findIndex(order => order.id === orderId);
   if (index < 0) return null;
-  orders[index] = { ...orders[index], ...updates };
+  const updatedOrder = { ...currentOrders[index], ...updates };
+  const orders = currentOrders.slice();
+  orders[index] = updatedOrder;
   writeAdminOrders(orders);
   if (Object.hasOwn(updates, "status")) {
     try {
-      accountingLedger.syncOrder(orders[index]);
+      accountingLedger.syncOrder(updatedOrder);
     } catch (error) {
       console.error("Hauptbuch konnte nicht mit der Bestelländerung synchronisiert werden:", error.message);
       const syncError = new Error("Bestellstatus wurde gespeichert, aber die Buchhaltung konnte nicht synchronisiert werden.");
@@ -590,7 +625,7 @@ function updateAdminOrder(orderId, updates) {
       throw syncError;
     }
   }
-  return orders[index];
+  return updatedOrder;
 }
 
 function recordOrderDelivery(order, deliveryStatus, discordMessage = {}, deliveryError = "") {
@@ -627,9 +662,33 @@ function nextAccountingDate(dateKey) {
 }
 
 function writeAccountingJson(filePath, value) {
-  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(temporaryPath, JSON.stringify(value, null, 2), { encoding: "utf8", mode: 0o600 });
-  fs.renameSync(temporaryPath, filePath);
+  writeJsonAtomically(filePath, value);
+}
+
+function runDailyDataBackup() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today === lastDataBackupDay) return;
+  try {
+    const backupPath = createDataBackup({
+      directory: DATA_BACKUP_DIR,
+      files: [
+        { name: "admin-orders", path: ADMIN_ORDERS_FILE },
+        { name: "shop-products", path: CATALOG_FILE },
+        { name: "shop-coupons", path: SHOP_COUPONS_FILE },
+        { name: "catalog-audit-pending", path: CATALOG_AUDIT_PENDING_FILE },
+        { name: "accounting-ledger", path: ACCOUNTING_LEDGER_FILE },
+        { name: "accounting-reports", path: ACCOUNTING_REPORTS_FILE },
+        { name: "material-bestellungen", path: path.join(LOCAL_ORDER_LOG_DIR, "material-bestellungen.json") },
+        { name: "stank-bestellungen", path: path.join(LOCAL_ORDER_LOG_DIR, "stank-bestellungen.json") },
+        { name: "wunsch-bestellungen", path: path.join(LOCAL_ORDER_LOG_DIR, "wunsch-bestellungen.json") },
+        { name: "ankauf-angebote", path: path.join(LOCAL_ORDER_LOG_DIR, "ankauf-angebote.json") }
+      ]
+    });
+    lastDataBackupDay = today;
+    console.log(`Datenbackup erstellt: ${backupPath}`);
+  } catch (error) {
+    console.error("Datenbackup konnte nicht erstellt werden:", error.message);
+  }
 }
 
 function readShopCoupons() {
@@ -818,6 +877,7 @@ async function sendAccountingReport(title, range, entries) {
 
 let accountingReportInProgress = false;
 let lastAccountingReportError = "";
+let lastDataBackupDay = "";
 
 async function runDailyAccountingReport() {
   if (accountingReportInProgress || !accountingDateIsDue()) return;
@@ -1248,8 +1308,7 @@ function applyDiscordOrderStatus(orderId, statusKey, actorName, messageId, paylo
   if (!order) {
     order = recoverAdminOrderFromDiscordMessage(orderId, payload);
     if (order) {
-      orders.push(order);
-      writeAdminOrders(orders);
+      writeAdminOrders([...orders, order]);
       console.warn(`Bestellung ${orderId} wurde aus der Discord-Nachricht wiederhergestellt.`);
     }
   }
@@ -2106,14 +2165,14 @@ async function handleMaterialOrder(req, res) {
     const result = await postToDiscordChannel(discordPayload, ORDER_CHANNEL_ID, false);
     if (result.method === "local-only") {
       recordOrderDelivery(order, "local-only");
-      saveMaterialOrderLocally(order);
+      const archiveWarning = saveMaterialOrderLocally(order);
       send(res, 200, JSON.stringify({
         ok: true,
         ...couponPriceResponse(pricing),
         orderCount: totalMaterials,
         channelId: ORDER_CHANNEL_ID,
         savedLocally: true,
-        message: `Bestellung wurde lokal gespeichert. Discord-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
+        message: `${archiveWarning}Bestellung wurde lokal gespeichert. Discord-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
       }), "application/json; charset=utf-8");
       return;
     }
@@ -2130,14 +2189,14 @@ async function handleMaterialOrder(req, res) {
   } catch (error) {
     console.error("Material-Bestellung fehlgeschlagen:", error.message);
     recordOrderDelivery(order, "failed", {}, error.message || String(error));
-    saveMaterialOrderLocally(order);
+    const archiveWarning = saveMaterialOrderLocally(order);
     send(res, 200, JSON.stringify({
       ok: true,
       ...couponPriceResponse(pricing),
       orderCount: totalMaterials,
       channelId: ORDER_CHANNEL_ID,
       savedLocally: true,
-      message: `Bestellung wurde lokal gespeichert. Der Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
+      message: `${archiveWarning}Bestellung wurde lokal gespeichert. Der Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   }
 }
@@ -2229,11 +2288,11 @@ async function handleSellOffer(req, res) {
     const result = await postToDiscordChannel(discordPayload, SELL_OFFER_CHANNEL_ID, false);
     if (result.method === "local-only") {
       recordOrderDelivery(sellOffer, "local-only");
-      saveOrderLocally(sellOffer, "ankauf-angebote.json");
+      const archiveWarning = saveOrderLocallyWithWarning(sellOffer, "ankauf-angebote.json");
       send(res, 200, JSON.stringify({
         ok: true,
         savedLocally: true,
-        message: "Angebot lokal gespeichert. Die Discord-Konfiguration fehlt noch."
+        message: `${archiveWarning}Angebot lokal gespeichert. Die Discord-Konfiguration fehlt noch.`
       }), "application/json; charset=utf-8");
       return;
     }
@@ -2247,11 +2306,11 @@ async function handleSellOffer(req, res) {
   } catch (error) {
     console.error("Ankauf-Angebot konnte nicht an Discord gesendet werden:", error.message);
     recordOrderDelivery(sellOffer, "failed", {}, error.message || String(error));
-    saveOrderLocally(sellOffer, "ankauf-angebote.json");
+    const archiveWarning = saveOrderLocallyWithWarning(sellOffer, "ankauf-angebote.json");
     send(res, 200, JSON.stringify({
       ok: true,
       savedLocally: true,
-      message: "Angebot lokal gespeichert. Der Discord-Upload war nicht verfügbar."
+      message: `${archiveWarning}Angebot lokal gespeichert. Der Discord-Upload war nicht verfügbar.`
     }), "application/json; charset=utf-8");
   }
 }
@@ -2320,14 +2379,14 @@ async function handleStankOrder(req, res) {
     );
     if (result.method === "local-only") {
       recordOrderDelivery(order, "local-only");
-      saveOrderLocally(order, "stank-bestellungen.json");
+      const archiveWarning = saveOrderLocallyWithWarning(order, "stank-bestellungen.json");
       send(res, 200, JSON.stringify({
         ok: true,
         ...couponPriceResponse(pricing),
         orderCount: quantity,
         channelId: STANK_ORDER_CHANNEL_ID,
         savedLocally: true,
-        message: `Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
+        message: `${archiveWarning}Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
       }), "application/json; charset=utf-8");
       return;
     }
@@ -2344,14 +2403,14 @@ async function handleStankOrder(req, res) {
   } catch (error) {
     console.error("STANK-Bestellung fehlgeschlagen:", error.message);
     recordOrderDelivery(order, "failed", {}, error.message || String(error));
-    saveOrderLocally(order, "stank-bestellungen.json");
+    const archiveWarning = saveOrderLocallyWithWarning(order, "stank-bestellungen.json");
     send(res, 200, JSON.stringify({
       ok: true,
       ...couponPriceResponse(pricing),
       orderCount: quantity,
       channelId: STANK_ORDER_CHANNEL_ID,
       savedLocally: true,
-      message: `Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
+      message: `${archiveWarning}Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   }
 }
@@ -2466,14 +2525,14 @@ async function handleCustomOrder(req, res) {
     );
     if (result.method === "local-only") {
       recordOrderDelivery(order, "local-only");
-      saveOrderLocally(order, "wunsch-bestellungen.json");
+      const archiveWarning = saveOrderLocallyWithWarning(order, "wunsch-bestellungen.json");
       send(res, 200, JSON.stringify({
         ok: true,
         ...couponPriceResponse(pricing),
         orderCount: items.length,
         channelId: CUSTOM_ORDER_CHANNEL_ID,
         savedLocally: true,
-        message: `Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
+        message: `${archiveWarning}Bestellung lokal gespeichert. Discord-Bot-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
       }), "application/json; charset=utf-8");
       return;
     }
@@ -2490,14 +2549,14 @@ async function handleCustomOrder(req, res) {
   } catch (error) {
     console.error("Wunsch-Bestellung fehlgeschlagen:", error.message);
     recordOrderDelivery(order, "failed", {}, error.message || String(error));
-    saveOrderLocally(order, "wunsch-bestellungen.json");
+    const archiveWarning = saveOrderLocallyWithWarning(order, "wunsch-bestellungen.json");
     send(res, 200, JSON.stringify({
       ok: true,
       ...couponPriceResponse(pricing),
       orderCount: items.length,
       channelId: CUSTOM_ORDER_CHANNEL_ID,
       savedLocally: true,
-      message: `Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
+      message: `${archiveWarning}Bestellung lokal gespeichert. Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   }
 }
@@ -2653,7 +2712,7 @@ async function handleRequest(req, res) {
     if (!adminSession) return;
     if (req.method === "GET") {
       try {
-        const orders = readAdminOrders().sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+        const orders = readAdminOrders().slice().sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
         send(res, 200, JSON.stringify({ ok: true, orders }), "application/json; charset=utf-8");
       } catch (error) {
         console.error("Admin-Bestellübersicht konnte nicht gelesen werden:", error.message);
@@ -3175,6 +3234,8 @@ setInterval(() => {
   void runDailyAccountingReport();
 }, 60 * 1000);
 
+setInterval(runDailyDataBackup, 60 * 60 * 1000);
+
 server.listen(PORT, HOST, () => {
   console.log(`Olymp Rechner läuft auf http://${HOST}:${PORT}`);
   if (!configIsReady(discordConfig())) console.log("Discord OAuth ist noch nicht konfiguriert. Bitte .env ausfüllen.");
@@ -3186,4 +3247,5 @@ server.listen(PORT, HOST, () => {
     console.error("Bestehende Bestellungen konnten nicht mit der Buchhaltung synchronisiert werden:", error.message);
   }
   void runDailyAccountingReport();
+  runDailyDataBackup();
 });

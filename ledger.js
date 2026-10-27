@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { writeJsonAtomically } = require("./json-store");
 
 const BOOKING_STATUSES = new Set(["Angenommen", "Erledigt"]);
 const CATEGORY_LABELS = {
@@ -52,10 +53,7 @@ function createLedger(file) {
   }
 
   function write(entries) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const temporaryPath = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    fs.writeFileSync(temporaryPath, JSON.stringify(entries, null, 2), { encoding: "utf8", mode: 0o600 });
-    fs.renameSync(temporaryPath, file);
+    writeJsonAtomically(file, entries);
   }
 
   function validate({ kind, category, amount, description }) {

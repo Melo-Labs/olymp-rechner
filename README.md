@@ -1,5 +1,11 @@
 # Produktions Rechner
 
+## Datensicherung und Wiederherstellung
+
+Der Server erstellt beim Start und anschließend täglich ein JSON-Datenbackup. Standardmäßig liegt es unter `data/backups`; `DATA_BACKUP_DIR` kann auf ein anderes Verzeichnis oder ein separates, persistentes Volume zeigen. Es werden bis zu 30 Snapshots behalten. Bestellungen, Shop-Katalog und Coupons, Buchhaltung sowie ausstehende Audit-Einträge sind enthalten. `manifest.json` dokumentiert Erstellungszeit, Dateigröße und SHA-256-Prüfsumme jeder gesicherten Datei. Backup-Fehler werden im Server-Log ausgegeben; die Anwendung bleibt verfügbar und versucht es erneut.
+
+Für eine Wiederherstellung den Server stoppen, im Snapshot die benötigten JSON-Dateien anhand des Manifests prüfen und an ihre ursprünglichen Speicherorte zurückkopieren. Für Pfade, die über `ADMIN_ORDERS_FILE`, `CATALOG_FILE`, `SHOP_COUPONS_FILE`, `ACCOUNTING_LEDGER_FILE`, `ACCOUNTING_REPORTS_FILE` oder `LOCAL_ORDER_LOG_DIR` konfiguriert wurden, gelten diese Zielpfade. Danach den Server starten und Bestellungen sowie Buchungen prüfen. Backups enthalten Kundendaten und müssen vor unbefugtem Zugriff geschützt werden. Ein Backup auf demselben flüchtigen Volume schützt nicht vor dessen Ausfall.
+
 ## Discord-Zugriff einrichten
 
 Der Rechner und die Produktverwaltung werden vom Node-Server ausgeliefert. Der Shop ist öffentlich, die Produktverwaltung erfordert eine erfolgreiche Discord-Anmeldung und die separat konfigurierte Katalog-Admin-Rolle.
