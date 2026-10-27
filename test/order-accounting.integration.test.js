@@ -124,6 +124,20 @@ test("completes discounted order through signed status changes and ledger rollba
     await waitForServer(baseUrl, child, output);
     await waitFor(() => fs.readdirSync(backupDirectory).some(name => name.startsWith("backup-")), "Startup backup was not created.");
 
+    const livenessResponse = await fetch(`${baseUrl}/livez`);
+    assert.equal(livenessResponse.status, 200);
+    assert.deepEqual(await livenessResponse.json(), { status: "ok" });
+
+    const initialHealthResponse = await fetch(`${baseUrl}/healthz`);
+    assert.equal(initialHealthResponse.status, 503);
+    const initialHealth = await initialHealthResponse.json();
+    assert.equal(initialHealth.status, "degraded");
+    assert.deepEqual(initialHealth.checks, {
+      discord: "unavailable",
+      storage: "ok",
+      orders: "ok"
+    });
+
     const orderResponse = await fetch(`${baseUrl}/api/material-bestellung`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -155,6 +169,9 @@ test("completes discounted order through signed status changes and ledger rollba
     }, "Order delivery did not finish in the background.");
     const localOrderCopy = JSON.parse(fs.readFileSync(path.join(archiveDirectory, "material-bestellungen.json"), "utf8"));
     assert.equal(localOrderCopy[0].id, orderId);
+    const orderHealthResponse = await fetch(`${baseUrl}/healthz`);
+    assert.equal(orderHealthResponse.status, 503);
+    assert.equal((await orderHealthResponse.json()).checks.orders, "degraded");
 
     const exhaustedCouponResponse = await fetch(`${baseUrl}/api/material-bestellung`, {
       method: "POST",

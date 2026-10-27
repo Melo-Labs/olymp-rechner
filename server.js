@@ -55,6 +55,8 @@ const HOST = process.env.HOST || "127.0.0.1";
 const COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === "true";
 const SESSION_TTL = 8 * 60 * 60 * 1000;
 const ROLE_CHECK_TTL = 60 * 1000;
+const HEALTH_CACHE_TTL = 5 * 1000;
+const STALE_ORDER_DELIVERY_TTL = 2 * 60 * 1000;
 const ORDER_CHANNEL_ID = process.env.DISCORD_ORDER_CHANNEL_ID || "1558426870465302538";
 const STANK_ORDER_CHANNEL_ID = "1558497954921193592";
 const CUSTOM_ORDER_CHANNEL_ID = "1558508937400291338";
@@ -132,6 +134,7 @@ const sessions = new Map();
 const pendingLogins = new Map();
 let catalogAuditInProgress = false;
 let adminOrdersCache = null;
+let cachedHealthReport = null;
 const staticFiles = new Map([
   ["/", "landing.html"],
   ["/index.html", "landing.html"],
@@ -593,6 +596,7 @@ function readAdminOrders() {
 function writeAdminOrders(orders) {
   writeAccountingJson(ADMIN_ORDERS_FILE, orders);
   adminOrdersCache = orders;
+  cachedHealthReport = null;
 }
 
 function trackAdminOrder(order) {
@@ -2466,6 +2470,84 @@ async function handleCustomOrder(req, res) {
   }, `Wunsch-Bestellung gespeichert. ${priceBreakdownMessage(pricing)}`);
 }
 
+function checkHealthStorage() {
+  const files = [
+    ADMIN_ORDERS_FILE,
+    SHOP_COUPONS_FILE,
+    CATALOG_FILE,
+    CATALOG_AUDIT_PENDING_FILE,
+    ACCOUNTING_LEDGER_FILE,
+    ACCOUNTING_REPORTS_FILE,
+    BUYBACK_PRODUCTS_FILE
+  ];
+  const directories = new Set([
+    ...files.map(file => path.dirname(file)),
+    LOCAL_ORDER_LOG_DIR,
+    DATA_BACKUP_DIR
+  ]);
+
+  try {
+    for (const file of files) fs.accessSync(file, fs.constants.R_OK | fs.constants.W_OK);
+    for (const directory of directories) {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.accessSync(directory, fs.constants.R_OK | fs.constants.W_OK);
+      const probeFile = path.join(directory, `.health-check-${process.pid}-${crypto.randomUUID()}.tmp`);
+      try {
+        fs.writeFileSync(probeFile, "ok", { flag: "wx" });
+      } finally {
+        try {
+          fs.unlinkSync(probeFile);
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+      }
+    }
+    return "ok";
+  } catch (error) {
+    console.error("Speicherprüfung fehlgeschlagen:", error.message);
+    return "unavailable";
+  }
+}
+
+function checkOrderDeliveryHealth() {
+  try {
+    const orders = JSON.parse(fs.readFileSync(ADMIN_ORDERS_FILE, "utf8"));
+    if (!Array.isArray(orders)) throw new Error("Admin-Bestelldatei enthält keine Bestellliste.");
+    const now = Date.now();
+    const hasDeliveryIssue = orders.some(order => {
+      if (order.deliveryStatus === "failed" || order.deliveryStatus === "local-only") return true;
+      if (order.deliveryStatus !== "pending") return false;
+      const createdAt = Date.parse(order.createdAt);
+      return !Number.isFinite(createdAt) || now - createdAt > STALE_ORDER_DELIVERY_TTL;
+    });
+    return hasDeliveryIssue ? "degraded" : "ok";
+  } catch (error) {
+    console.error("Bestellversand konnte nicht geprüft werden:", error.message);
+    return "unavailable";
+  }
+}
+
+function getHealthReport() {
+  const now = Date.now();
+  if (cachedHealthReport && now - cachedHealthReport.checkedAt < HEALTH_CACHE_TTL) {
+    return cachedHealthReport.report;
+  }
+
+  const config = discordConfig();
+  const checks = {
+    discord: config.botToken && discordGatewayClient?.isReady() ? "ok" : "unavailable",
+    storage: checkHealthStorage(),
+    orders: checkOrderDeliveryHealth()
+  };
+  const report = {
+    status: Object.values(checks).every(status => status === "ok") ? "ok" : "degraded",
+    checks,
+    checkedAt: new Date(now).toISOString()
+  };
+  cachedHealthReport = { checkedAt: now, report };
+  return report;
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const pathname = url.pathname;
@@ -2954,8 +3036,13 @@ async function handleRequest(req, res) {
     send(res, 405, "Methode nicht erlaubt");
     return;
   }
+  if (pathname === "/livez") {
+    sendJson(res, 200, { status: "ok" });
+    return;
+  }
   if (pathname === "/healthz") {
-    send(res, 200, "ok");
+    const report = getHealthReport();
+    sendJson(res, report.status === "ok" ? 200 : 503, report);
     return;
   }
   if (pathname === "/login") {

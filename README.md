@@ -51,6 +51,12 @@ Für jede erfolgreiche `git push`-Operation wird eine Discord-Nachricht an einen
 
 Nach dem nächsten `git push` erscheint im Discord-Channel eine Nachricht mit Repository, Zweig, Remote und den letzten Commits.
 
+## Health-Monitoring
+
+`/livez` ist die Liveness-Prüfung: Sie antwortet mit HTTP 200, solange der Webserver Anfragen verarbeitet. `/healthz` prüft zusätzlich die Discord-Bot-Verbindung, ob die wichtigen Datendateien les- und beschreibbar sind, sowie fehlgeschlagene, lokal gespeicherte oder länger als zwei Minuten ausstehende Bestellungen. Bei Problemen liefert `/healthz` HTTP 503 und nur aggregierte Statuswerte, keine Bestelldaten oder Fehlerdetails. Der Bericht wird fünf Sekunden zwischengespeichert.
+
+Für Hosting-Neustartprüfungen `/livez` verwenden, damit ein vorübergehender Discord-Ausfall nicht unnötig den gesamten Webserver neu startet. `/healthz` eignet sich für Monitoring und Benachrichtigungen bei einem degradierten Zustand.
+
 ## Hosting
 
 Für öffentliches Hosting die Redirect URI im Developer Portal und in `.env` auf dieselbe HTTPS-Adresse setzen. `HOST` auf `0.0.0.0` setzen, damit der Hosting-Anbieter den Prozess erreichen kann, und `SESSION_COOKIE_SECURE=true` aktivieren. Das Client-Secret und `DISCORD_BOT_TOKEN` ausschließlich als geschützte Umgebungsvariablen des Hostings hinterlegen.
