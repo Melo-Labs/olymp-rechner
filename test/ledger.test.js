@@ -109,3 +109,71 @@ test("validates manual entries and summarizes Berlin date periods", () => {
     assert.equal(periodRange("monat", "2026-10-27").from, "2026-10-01");
   });
 });
+
+test("keeps manual corrections append-only with reason and replacement", () => {
+  withLedger(ledger => {
+    const original = ledger.add({
+      kind: "expense",
+      category: "manual",
+      amount: 50,
+      description: "Material",
+      bookedBy: "Admin",
+      sourceId: "web-booking-1"
+    });
+    const result = ledger.correctEntry(original.id, {
+      by: "Kassenwart",
+      reason: "Betrag falsch übertragen",
+      replacement: {
+        kind: "expense",
+        amount: 70,
+        description: "Material korrigiert"
+      }
+    });
+
+    assert.equal(result.entry.voided.by, "Kassenwart");
+    assert.equal(result.entry.voided.reason, "Betrag falsch übertragen");
+    assert.equal(result.entry.voided.action, "corrected");
+    assert.equal(result.entry.voided.replacementId, result.corrected.id);
+    assert.equal(result.corrected.correctionOf, original.id);
+    assert.equal(summarize(ledger.read()).expense, 70);
+    assert.throws(
+      () => ledger.correctEntry(original.id, { by: "Admin", reason: "Doppelt" }),
+      error => error.code === "ALREADY_VOIDED"
+    );
+  });
+});
+
+test("preserves order correction after status rollback and re-acceptance", () => {
+  withLedger(ledger => {
+    const order = {
+      id: "order-corrected",
+      type: "material",
+      totalPrice: 600,
+      status: "Angenommen",
+      createdAt: "2026-10-25T10:00:00.000Z",
+      updatedAt: "2026-10-26T10:00:00.000Z"
+    };
+    const original = ledger.syncOrder(order).added;
+    assert.throws(
+      () => ledger.correctEntry(original.id, { by: "Admin", reason: "Storno ohne Bestellstatus" }),
+      /Bestellbuchungen/
+    );
+    ledger.correctEntry(original.id, {
+      by: "Admin",
+      reason: "Bestellbetrag geprüft",
+      replacement: {
+        amount: 700,
+        description: "Bestellung korrigiert"
+      }
+    });
+    assert.equal(summarize(ledger.read()).income, 700);
+
+    order.status = "Abgelehnt";
+    ledger.syncOrder(order);
+    order.status = "Angenommen";
+    const rebooked = ledger.syncOrder(order).added;
+    assert.equal(rebooked.amount, 700);
+    assert.equal(rebooked.description, "Bestellung korrigiert");
+    assert.equal(summarize(ledger.read()).income, 700);
+  });
+});

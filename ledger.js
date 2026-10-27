@@ -90,51 +90,107 @@ function createLedger(file) {
     return entry;
   }
 
-  function voidEntry(id, by, reason) {
+  function correctEntry(id, { by = "System", reason, replacement = null } = {}) {
     const entries = read();
     const entry = entries.find(item => item.id === id);
-    if (!entry) return { error: "NOT_FOUND" };
-    if (entry.voided) return { error: "ALREADY_VOIDED", entry };
+    if (!entry) {
+      const error = new Error("Buchung nicht gefunden.");
+      error.code = "NOT_FOUND";
+      throw error;
+    }
+    if (entry.voided) {
+      const error = new Error("Diese Buchung wurde bereits storniert oder korrigiert.");
+      error.code = "ALREADY_VOIDED";
+      throw error;
+    }
+    const normalizedReason = String(reason || "").trim();
+    if (normalizedReason.length < 3 || normalizedReason.length > 200) {
+      throw new Error("Der Grund muss zwischen 3 und 200 Zeichen lang sein.");
+    }
+    if (entry.orderId && !replacement) {
+      throw new Error("Bestellbuchungen können nicht manuell storniert werden. Ändere stattdessen den Bestellstatus.");
+    }
+    if (replacement) {
+      validate({
+        kind: replacement.kind || entry.kind,
+        category: entry.category,
+        amount: replacement.amount,
+        description: replacement.description
+      });
+    }
+
+    const changedAt = new Date().toISOString();
+    const replacementId = replacement ? crypto.randomUUID() : "";
     entry.voided = {
-      at: new Date().toISOString(),
+      at: changedAt,
       by: String(by || "System").slice(0, 80),
-      reason: String(reason || "").trim().slice(0, 200)
+      reason: normalizedReason,
+      action: replacement ? "corrected" : "voided",
+      replacementId
     };
+    let corrected = null;
+    if (replacement) {
+      corrected = {
+        id: replacementId,
+        kind: replacement.kind || entry.kind,
+        category: entry.category,
+        amount: replacement.amount,
+        description: replacement.description.trim().slice(0, 200),
+        source: entry.source,
+        orderId: entry.orderId,
+        sourceId: "",
+        correctionOf: entry.id,
+        bookedAt: changedAt,
+        bookedBy: String(by || "System").slice(0, 80),
+        voided: null
+      };
+      entries.push(corrected);
+    }
     write(entries);
-    return { entry };
+    return { entry, corrected };
   }
 
   // Bestellungen werden nur bei Angenommen/Erledigt gebucht; Ankauf-Angebote sind Ausgaben.
-  // Fällt der Status zurück oder wird abgelehnt, wird die zugehörige Buchung storniert.
+  // Fällt der Status zurück oder wird abgelehnt, werden alle aktiven zugehörigen Buchungen storniert.
   function syncOrder(order) {
     const orderId = String(order?.id || "");
     if (!orderId) return { added: null, voided: null };
     const entries = read();
-    const active = entries.find(entry => entry.orderId === orderId && !entry.voided);
+    const activeEntries = entries.filter(entry => entry.orderId === orderId && !entry.voided);
     const bookable = BOOKING_STATUSES.has(order.status)
       && Number.isSafeInteger(order.totalPrice) && order.totalPrice > 0
       && Object.hasOwn(CATEGORY_LABELS, order.type);
 
-    if (active && !bookable) {
-      active.voided = {
-        at: new Date().toISOString(),
-        by: String(order.updatedBy || "System").slice(0, 80),
-        reason: `Bestellstatus: ${order.status || "unbekannt"}`
-      };
+    if (activeEntries.length && !bookable) {
+      for (const active of activeEntries) {
+        active.voided = {
+          at: new Date().toISOString(),
+          by: String(order.updatedBy || "System").slice(0, 80),
+          reason: `Bestellstatus: ${order.status || "unbekannt"}`,
+          action: "voided",
+          replacementId: ""
+        };
+      }
       write(entries);
-      return { added: null, voided: active };
+      return { added: null, voided: activeEntries[0] };
     }
-    if (active || !bookable) return { added: null, voided: null };
+    if (activeEntries.length || !bookable) return { added: null, voided: null };
 
     const customer = order.icName || order.customerName || "Unbekannt";
+    const latestCorrection = entries
+      .filter(entry => entry.orderId === orderId && entry.correctionOf)
+      .sort((left, right) => Date.parse(left.bookedAt) - Date.parse(right.bookedAt))
+      .at(-1);
     const entry = {
       id: crypto.randomUUID(),
-      kind: order.type === "sell-offer" ? "expense" : "income",
+      kind: latestCorrection?.kind || (order.type === "sell-offer" ? "expense" : "income"),
       category: order.type,
-      amount: order.totalPrice,
-      description: `${CATEGORY_LABELS[order.type]} · ${customer}`.slice(0, 200),
+      amount: latestCorrection?.amount || order.totalPrice,
+      description: latestCorrection?.description || `${CATEGORY_LABELS[order.type]} · ${customer}`.slice(0, 200),
       source: "order",
       orderId,
+      sourceId: "",
+      correctionOf: latestCorrection?.id || "",
       bookedAt: order.updatedAt || order.createdAt || new Date().toISOString(),
       bookedBy: String(order.updatedBy || "System").slice(0, 80),
       voided: null
@@ -152,7 +208,7 @@ function createLedger(file) {
     return added;
   }
 
-  return { read, add, voidEntry, syncOrder, syncAllOrders };
+  return { read, add, correctEntry, syncOrder, syncAllOrders };
 }
 
 function summarize(entries, { from = null, to = null } = {}) {

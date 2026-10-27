@@ -14,12 +14,13 @@
     h1{margin:0 0 8px;font-size:clamp(1.8rem,5vw,3rem)}.lead,.hint,.meta{color:var(--mut);line-height:1.6}
     .panel,.stat,.entry{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(21,25,29,.96),rgba(10,12,14,.96));box-shadow:0 24px 32px -28px rgba(0,0,0,.85)}
     .panel{padding:20px;margin-top:20px}.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 18px}
-    select,button{min-height:44px;padding:9px 12px;border:1px solid rgba(142,198,232,.24);border-radius:9px;background:#101418;color:var(--text);font:inherit}
-    button{font-weight:700;cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible{outline:3px solid rgba(142,198,232,.55);outline-offset:2px}
+    select,input,textarea,button{min-height:44px;padding:9px 12px;border:1px solid rgba(142,198,232,.24);border-radius:9px;background:#101418;color:var(--text);font:inherit}
+    textarea{min-height:88px;resize:vertical}button{font-weight:700;cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid rgba(142,198,232,.55);outline-offset:2px}
+    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.field{display:grid;gap:6px;min-width:0}.field-wide{grid-column:1/-1}.field label{font-weight:650}.field small{color:var(--mut)}.field input,.field select,.field textarea{width:100%}.form-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px}.primary-action{background:var(--accent);border-color:var(--accent);color:#091116}.subheading{margin:0 0 6px;font-size:1.15rem}.entry-actions{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}.entry-actions summary{width:fit-content;min-height:44px;display:flex;align-items:center;padding:4px 2px;color:var(--accent);font-weight:700;cursor:pointer}.correction-form{display:grid;gap:12px;margin-top:12px}.entry-action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.entry-id{overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.85em}
     .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}.stat{padding:16px}.stat strong{display:block;font-size:clamp(1.2rem,4vw,1.8rem);overflow-wrap:anywhere}.stat span{color:var(--mut);font-size:.9rem}
     .entry-list{display:grid;gap:10px}.entry{padding:16px;box-shadow:none}.entry-head{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}.entry h2{margin:0;font-size:1.05rem}.amount{font-weight:800;white-space:nowrap}.income{color:#72d9b1}.expense{color:#ff9a9a}.entry p{margin:6px 0 0;color:var(--mut)}.empty{color:var(--mut);padding:16px 4px}
     .status-message{min-height:24px;margin:12px 0 0}.status-message.error{color:#ff8f8f}.status-message.success{color:#72d9b1}
-    @media(max-width:620px){main{padding-top:22px}.panel{padding:14px}.stats{grid-template-columns:1fr}.stat{padding:12px}.toolbar select,.toolbar button{flex:1 1 100%}}
+    @media(max-width:620px){main{padding-top:22px}.panel{padding:14px}.stats,.form-grid,.entry-action-grid{grid-template-columns:1fr}.stat{padding:12px}.toolbar select,.toolbar button{flex:1 1 100%}}
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
   </style>
   <link rel="stylesheet" href="/admin/nav.css">
@@ -33,6 +34,34 @@
     </div>
     <h1>Buchhaltung</h1>
     <p class="lead">Ein gemeinsames Hauptbuch für bestätigte Bestellungen, Ankauf-Ausgaben und manuelle Discord-Buchungen.</p>
+    <section class="panel" aria-labelledby="manual-entry-heading">
+      <h2 class="subheading" id="manual-entry-heading">Manuelle Buchung erfassen</h2>
+      <p class="hint">Für Einnahmen oder Ausgaben, die nicht aus einer Bestellung stammen. Jede Buchung wird mit deinem Admin-Konto protokolliert.</p>
+      <form id="manual-entry-form">
+        <div class="form-grid">
+          <div class="field">
+            <label for="manual-kind">Buchungsart</label>
+            <select id="manual-kind" name="kind" required>
+              <option value="income">Einnahme</option>
+              <option value="expense">Ausgabe</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="manual-amount">Betrag in Dollar</label>
+            <input id="manual-amount" name="amount" type="number" min="1" max="1000000000" step="1" inputmode="numeric" required>
+          </div>
+          <div class="field field-wide">
+            <label for="manual-description">Beschreibung</label>
+            <input id="manual-description" name="description" type="text" maxlength="200" autocomplete="off" required>
+            <small>Zum Beispiel: „Kassendifferenz 27.10.“</small>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="primary-action" type="submit">Buchung speichern</button>
+          <span id="manual-entry-feedback" class="hint" role="status" aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
     <section class="panel">
       <div class="toolbar">
         <label for="period-filter">Zeitraum:</label>
@@ -52,7 +81,7 @@
       <p id="status-message" class="status-message" aria-live="polite"></p>
       <div id="entries" class="entry-list" aria-live="polite">Buchungen werden geladen …</div>
       <p id="entry-limit" class="hint"></p>
-      <p class="hint">Bestellungen werden erst bei „Angenommen“ gebucht. Abgelehnte oder zurückgesetzte Bestellungen werden aus dem Saldo storniert und bleiben nachvollziehbar protokolliert. Der Saldo ist eine Bestell-/Buchungssumme, kein bestätigter Kontostand.</p>
+      <p class="hint">Bestellungen werden erst bei „Angenommen“ gebucht. Statusbedingte Stornos und manuelle Korrekturen bleiben mit Grund, Admin und Zeitpunkt nachvollziehbar. Der Saldo ist eine Buchungssumme, kein bestätigter Kontostand.</p>
     </section>
   </main>
   <script src="/admin/accounting.js"></script><script src="/admin/nav.js"></script>

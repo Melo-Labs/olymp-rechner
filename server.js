@@ -15,7 +15,7 @@ const {
   PermissionFlagsBits,
   SlashCommandBuilder
 } = require("discord.js");
-const { CATEGORY_LABELS, createLedger, periodRange, summarize } = require("./ledger");
+const { CATEGORY_LABELS, createLedger, periodRange, shiftDateKey, summarize } = require("./ledger");
 const {
   ORDER_STATUS_LABELS,
   isAdminOrderClosed,
@@ -231,7 +231,7 @@ function loginPage(error = "", title = "Produktionsrechner", redirectPath = "/pr
     cancelled: "Die Discord-Anmeldung wurde abgebrochen."
   };
   const message = messages[error] || "";
-  const adminPath = ["/admin/catalog", "/admin/orders"].includes(redirectPath) ? redirectPath : "/admin/catalog";
+  const adminPath = ["/admin/catalog", "/admin/orders", "/admin/accounting"].includes(redirectPath) ? redirectPath : "/admin/catalog";
   const authHref = title === "Admin Panel" ? `/auth/discord?next=${encodeURIComponent(adminPath)}` : "/auth/discord";
   return `<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung</title>
@@ -391,7 +391,7 @@ async function beginLogin(req, res, config) {
   if (!configIsReady(config)) {
     const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const requestedDestination = loginUrl.searchParams.get("next");
-    const isAdmin = ["/admin/catalog", "/admin/orders"].includes(requestedDestination);
+    const isAdmin = ["/admin/catalog", "/admin/orders", "/admin/accounting"].includes(requestedDestination);
     send(res, 503, loginPage("setup", isAdmin ? "Admin Panel" : "Produktionsrechner", requestedDestination || "/admin/catalog"), "text/html; charset=utf-8");
     return;
   }
@@ -401,7 +401,7 @@ async function beginLogin(req, res, config) {
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const requestedDestination = loginUrl.searchParams.get("next");
-  const redirectPath = ["/admin/catalog", "/admin/orders"].includes(requestedDestination) ? requestedDestination : "";
+  const redirectPath = ["/admin/catalog", "/admin/orders", "/admin/accounting"].includes(requestedDestination) ? requestedDestination : "";
   pendingLogins.set(state, { verifier, redirectPath, expiresAt: Date.now() + 10 * 60 * 1000 });
   appendCookie(res, makeCookie("olymp_oauth_state", state, 600));
   const query = new URLSearchParams({
@@ -623,7 +623,7 @@ function writeAccountingJson(filePath, value) {
 
 function readAccountingReports() {
   if (!fs.existsSync(ACCOUNTING_REPORTS_FILE)) {
-    const initial = { startedOn: accountingDateKey(), sentDates: [] };
+    const initial = { startedOn: accountingDateKey(), sentDates: [], sentWeeks: [], sentMonths: [] };
     writeAccountingJson(ACCOUNTING_REPORTS_FILE, initial);
     return initial;
   }
@@ -631,6 +631,8 @@ function readAccountingReports() {
   if (!state || !/^\d{4}-\d{2}-\d{2}$/.test(state.startedOn) || !Array.isArray(state.sentDates)) {
     throw new Error("Buchhaltungsstatus ist ungültig.");
   }
+  if (!Array.isArray(state.sentWeeks)) state.sentWeeks = [];
+  if (!Array.isArray(state.sentMonths)) state.sentMonths = [];
   return state;
 }
 
@@ -645,14 +647,27 @@ function accountingDateIsDue(date = new Date()) {
   return values.hour > 0 || (values.hour === 0 && values.minute >= 5);
 }
 
-function summarizeAccountingDate(dateKey, orders) {
-  return summarize(orders, { from: dateKey, to: dateKey });
+function accountingWeekStart(date) {
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay() || 7;
+  return shiftDateKey(date, 1 - weekday);
 }
 
-async function sendAccountingReport(dateKey, orders) {
-  const summary = summarizeAccountingDate(dateKey, orders);
+function accountingMonthStart(date) {
+  return `${date.slice(0, 7)}-01`;
+}
+
+function accountingMonthEnd(monthStart) {
+  return shiftDateKey(shiftDateKey(monthStart, 32).slice(0, 7) + "-01", -1);
+}
+
+function accountingDateLabel(date) {
+  return date.split("-").reverse().join(".");
+}
+
+async function sendAccountingReport(title, range, entries) {
+  const summary = summarize(entries, range);
   const embed = {
-    title: `Tagesbuchhaltung · ${dateKey.split("-").reverse().join(".")}`,
+    title,
     description: `**Einnahmen: ${summary.income.toLocaleString("de-DE")} $**\n**Ausgaben: ${summary.expense.toLocaleString("de-DE")} $**\n**Saldo: ${summary.net.toLocaleString("de-DE")} $**\n${summary.count} Buchungen`,
     color: 0x3978d4,
     fields: Object.entries(summary.categories).map(([category, totals]) => ({
@@ -681,19 +696,69 @@ async function runDailyAccountingReport() {
   accountingReportInProgress = true;
   try {
     const state = readAccountingReports();
-    const latestClosedDate = previousAccountingDate(accountingDateKey());
+    const today = accountingDateKey();
+    const latestClosedDate = previousAccountingDate(today);
     if (state.startedOn > latestClosedDate) return;
     let reportDate = state.startedOn;
     while (reportDate <= latestClosedDate && state.sentDates.includes(reportDate)) {
       reportDate = nextAccountingDate(reportDate);
     }
-    if (reportDate > latestClosedDate) return;
+    if (reportDate <= latestClosedDate) {
+      await sendAccountingReport(
+        `Tagesbuchhaltung · ${accountingDateLabel(reportDate)}`,
+        { from: reportDate, to: reportDate },
+        accountingLedger.read()
+      );
+      state.sentDates.push(reportDate);
+      writeAccountingJson(ACCOUNTING_REPORTS_FILE, state);
+      lastAccountingReportError = "";
+      console.log(`Buchhaltungsbericht für ${reportDate} in Discord veröffentlicht.`);
+      return;
+    }
 
-    await sendAccountingReport(reportDate, accountingLedger.read());
-    state.sentDates.push(reportDate);
+    const latestClosedWeek = shiftDateKey(accountingWeekStart(today), -7);
+    let weekStart = accountingWeekStart(state.startedOn);
+    while (weekStart <= latestClosedWeek && state.sentWeeks.includes(weekStart)) {
+      weekStart = shiftDateKey(weekStart, 7);
+    }
+    if (weekStart <= latestClosedWeek) {
+      const weekEnd = shiftDateKey(weekStart, 6);
+      const from = state.startedOn > weekStart ? state.startedOn : weekStart;
+      await sendAccountingReport(
+        `Wochenbuchhaltung · ${accountingDateLabel(from)}–${accountingDateLabel(weekEnd)}`,
+        { from, to: weekEnd },
+        accountingLedger.read()
+      );
+      state.sentWeeks.push(weekStart);
+      writeAccountingJson(ACCOUNTING_REPORTS_FILE, state);
+      lastAccountingReportError = "";
+      console.log(`Wochenbuchhaltungsbericht ab ${weekStart} in Discord veröffentlicht.`);
+      return;
+    }
+
+    const latestClosedMonth = previousAccountingDate(accountingMonthStart(today));
+    const latestClosedMonthStart = accountingMonthStart(latestClosedMonth);
+    let monthStart = accountingMonthStart(state.startedOn);
+    while (monthStart <= latestClosedMonthStart && state.sentMonths.includes(monthStart)) {
+      monthStart = accountingMonthStart(shiftDateKey(monthStart, 32));
+    }
+    if (monthStart > latestClosedMonthStart) return;
+    const monthEnd = accountingMonthEnd(monthStart);
+    const from = state.startedOn > monthStart ? state.startedOn : monthStart;
+    const monthLabel = new Intl.DateTimeFormat("de-DE", {
+      timeZone: "Europe/Berlin",
+      month: "long",
+      year: "numeric"
+    }).format(new Date(`${monthStart}T12:00:00Z`));
+    await sendAccountingReport(
+      `Monatsbuchhaltung · ${monthLabel}`,
+      { from, to: monthEnd },
+      accountingLedger.read()
+    );
+    state.sentMonths.push(monthStart);
     writeAccountingJson(ACCOUNTING_REPORTS_FILE, state);
     lastAccountingReportError = "";
-    console.log(`Buchhaltungsbericht für ${reportDate} in Discord veröffentlicht.`);
+    console.log(`Monatsbuchhaltungsbericht ${monthStart} in Discord veröffentlicht.`);
   } catch (error) {
     const signature = error.message || String(error);
     if (signature !== lastAccountingReportError) {
@@ -1330,8 +1395,50 @@ function addManualAccountingEntry(guildId, roleIds, kind, amount, description, b
   const label = kind === "income" ? "Einnahme" : "Ausgabe";
   return {
     entry,
-    content: `${label} über ${amount.toLocaleString("de-DE")} $ gebucht. Aktueller Saldo: ${summary.net.toLocaleString("de-DE")} $.`
+    content: `${label} über ${amount.toLocaleString("de-DE")} $ gebucht. Aktueller Saldo: ${summary.net.toLocaleString("de-DE")} $.\nBuchungs-ID: \`${entry.id}\``
   };
+}
+
+function accountingCashMessage(period) {
+  if (!["heute", "woche", "monat", "gesamt"].includes(period)) {
+    throw new Error("Bitte einen gültigen Zeitraum auswählen.");
+  }
+  const range = periodRange(period, accountingDateKey());
+  const entries = accountingLedger.read();
+  const summary = summarize(entries, range);
+  const lines = [
+    `**Kasse · ${range.label}**`,
+    `Einnahmen: **${summary.income.toLocaleString("de-DE")} $**`,
+    `Ausgaben: **${summary.expense.toLocaleString("de-DE")} $**`,
+    `Saldo: **${summary.net.toLocaleString("de-DE")} $**`,
+    `${summary.count} aktive Buchung(en)`
+  ];
+  if (range.from) lines.push(`Zeitraum: ${accountingDateLabel(range.from)}${range.to !== range.from ? `–${accountingDateLabel(range.to)}` : ""}`);
+  return lines.join("\n");
+}
+
+function correctManualAccountingEntry(guildId, roleIds, id, reason, replacement, bookedBy) {
+  const config = discordConfig();
+  if (!memberCanManageOrders(guildId, roleIds, config)) {
+    throw new Error("Nur Mitglieder mit der Katalog-Admin-Rolle dürfen Buchungen korrigieren oder stornieren.");
+  }
+  let result;
+  try {
+    result = accountingLedger.correctEntry(id, { by: bookedBy, reason, replacement });
+  } catch (error) {
+    if (error.code && !["NOT_FOUND", "ALREADY_VOIDED"].includes(error.code)) {
+      console.error("Buchungskorrektur konnte nicht gespeichert werden:", error.message);
+      throw new Error("Die Änderung konnte nicht dauerhaft gespeichert werden. Bitte Admin informieren.");
+    }
+    throw error;
+  }
+  return result.corrected
+    ? `Buchung korrigiert und nachvollziehbar protokolliert. Neue Buchungs-ID: \`${result.corrected.id}\``
+    : `Buchung \`${id}\` wurde mit Grund „${reason.trim()}“ storniert.`;
+}
+
+function accountingOptions(payload) {
+  return Object.fromEntries((payload.data?.options || []).map(option => [option.name, option.value]));
 }
 
 async function handleManualBookingInteraction(interaction) {
@@ -1359,9 +1466,54 @@ async function handleManualBookingInteraction(interaction) {
   await interaction.editReply({ content: result.content });
 }
 
+async function handleCashInteraction(interaction) {
+  const config = discordConfig();
+  const roleIds = interaction.member?.roles?.cache
+    ? [...interaction.member.roles.cache.keys()]
+    : [];
+  if (!memberCanManageOrders(interaction.guildId, roleIds, config)) {
+    await interaction.reply({
+      content: "Nur Mitglieder mit der Katalog-Admin-Rolle dürfen die Kasse einsehen.",
+      ephemeral: true
+    });
+    return;
+  }
+  const period = interaction.options.getString("zeitraum", true);
+  await interaction.reply({ content: accountingCashMessage(period), ephemeral: true });
+}
+
+async function handleVoidInteraction(interaction) {
+  const roleIds = interaction.member?.roles?.cache
+    ? [...interaction.member.roles.cache.keys()]
+    : [];
+  const id = interaction.options.getString("buchung_id", true).trim();
+  const reason = interaction.options.getString("grund", true);
+  const amount = interaction.options.getInteger("neuer_betrag");
+  const description = interaction.options.getString("neue_beschreibung");
+  const kind = interaction.options.getString("neue_art");
+  const hasReplacement = amount !== null || description !== null || kind !== null;
+  const replacement = hasReplacement ? { amount, description, kind: kind || undefined } : null;
+  if (hasReplacement && (!Number.isSafeInteger(amount) || typeof description !== "string" || !description.trim())) {
+    await interaction.reply({
+      content: "Für eine Korrektur müssen neuer Betrag und neue Beschreibung zusammen angegeben werden.",
+      ephemeral: true
+    });
+    return;
+  }
+  const content = correctManualAccountingEntry(
+    interaction.guildId,
+    roleIds,
+    id,
+    reason,
+    replacement,
+    actorNameFromMember(interaction.member)
+  );
+  await interaction.reply({ content, ephemeral: true });
+}
+
 async function handleHttpManualBooking(payload) {
   const roleIds = Array.isArray(payload.member?.roles) ? payload.member.roles : [];
-  const options = Object.fromEntries((payload.data?.options || []).map(option => [option.name, option.value]));
+  const options = accountingOptions(payload);
   const result = addManualAccountingEntry(
     payload.guild_id,
     roleIds,
@@ -1372,6 +1524,37 @@ async function handleHttpManualBooking(payload) {
     payload.id
   );
   return result.content;
+}
+
+async function handleHttpCash(payload, config) {
+  const roleIds = Array.isArray(payload.member?.roles) ? payload.member.roles : [];
+  if (!memberCanManageOrders(payload.guild_id, roleIds, config)) {
+    throw new Error("Nur Mitglieder mit der Katalog-Admin-Rolle dürfen die Kasse einsehen.");
+  }
+  const options = accountingOptions(payload);
+  return accountingCashMessage(options.zeitraum);
+}
+
+async function handleHttpVoid(payload) {
+  const roleIds = Array.isArray(payload.member?.roles) ? payload.member.roles : [];
+  const options = accountingOptions(payload);
+  const hasReplacement = options.neuer_betrag !== undefined
+    || options.neue_beschreibung !== undefined
+    || options.neue_art !== undefined;
+  if (hasReplacement && (!Number.isSafeInteger(options.neuer_betrag)
+    || typeof options.neue_beschreibung !== "string" || !options.neue_beschreibung.trim())) {
+    throw new Error("Für eine Korrektur müssen neuer Betrag und neue Beschreibung zusammen angegeben werden.");
+  }
+  return correctManualAccountingEntry(
+    payload.guild_id,
+    roleIds,
+    String(options.buchung_id || "").trim(),
+    options.grund,
+    hasReplacement
+      ? { amount: options.neuer_betrag, description: options.neue_beschreibung, kind: options.neue_art }
+      : null,
+    actorNameFromMember(payload.member)
+  );
 }
 
 async function registerNewFamilyCommand(client, guildId) {
@@ -1414,7 +1597,55 @@ async function registerNewFamilyCommand(client, guildId) {
       .setMaxLength(100))
     .toJSON();
 
-  for (const command of [familyCommand, manualBookingCommand]) {
+  const cashCommand = new SlashCommandBuilder()
+    .setName("kasse")
+    .setDescription("Zeigt Einnahmen, Ausgaben und Saldo der Buchhaltung.")
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("zeitraum")
+      .setDescription("Zeitraum für den Kassenstand")
+      .setRequired(true)
+      .addChoices(
+        { name: "Heute", value: "heute" },
+        { name: "Diese Woche", value: "woche" },
+        { name: "Dieser Monat", value: "monat" },
+        { name: "Gesamt", value: "gesamt" }
+      ))
+    .toJSON();
+  const voidCommand = new SlashCommandBuilder()
+    .setName("storno")
+    .setDescription("Storniert oder korrigiert eine Buchung mit Begründung.")
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("buchung_id")
+      .setDescription("ID aus der Buchungsbestätigung oder Admin-Buchhaltung")
+      .setRequired(true)
+      .setMaxLength(36))
+    .addStringOption(option => option
+      .setName("grund")
+      .setDescription("Warum wird storniert oder korrigiert?")
+      .setRequired(true)
+      .setMinLength(3)
+      .setMaxLength(200))
+    .addIntegerOption(option => option
+      .setName("neuer_betrag")
+      .setDescription("Neuer Betrag bei einer Korrektur")
+      .setMinValue(1)
+      .setMaxValue(1_000_000_000))
+    .addStringOption(option => option
+      .setName("neue_beschreibung")
+      .setDescription("Neue Beschreibung bei einer Korrektur")
+      .setMaxLength(100))
+    .addStringOption(option => option
+      .setName("neue_art")
+      .setDescription("Neue Buchungsart bei einer Korrektur")
+      .addChoices(
+        { name: "Einnahme", value: "income" },
+        { name: "Ausgabe", value: "expense" }
+      ))
+    .toJSON();
+
+  for (const command of [familyCommand, manualBookingCommand, cashCommand, voidCommand]) {
     const existingCommand = commands.find(existing => existing.name === command.name);
     if (existingCommand) {
       await existingCommand.edit(command);
@@ -1522,6 +1753,21 @@ async function handleDiscordInteraction(req, res) {
       })
       .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
       .catch(error => console.error("Discord-Antwort auf /buchung fehlgeschlagen:", error.message));
+    return;
+  }
+
+  if (payload.type === 2 && ["kasse", "storno"].includes(payload.data?.name)) {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    const handler = payload.data.name === "kasse"
+      ? handleHttpCash(payload, config)
+      : handleHttpVoid(payload);
+    void Promise.resolve(handler)
+      .catch(error => {
+        console.error(`Discord-Slash-Command /${payload.data.name} fehlgeschlagen:`, error.message);
+        return `/${payload.data.name} fehlgeschlagen: ${error.message}`;
+      })
+      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
+      .catch(error => console.error(`Discord-Antwort auf /${payload.data.name} fehlgeschlagen:`, error.message));
     return;
   }
 
@@ -2215,9 +2461,91 @@ async function handleRequest(req, res) {
     send(res, 200, JSON.stringify({ ok: true, order, discordSynced, warning }), "application/json; charset=utf-8");
     return;
   }
-  if (req.method === "GET" && pathname === "/api/admin/accounting") {
+  const accountingEntryMatch = pathname.match(/^\/api\/admin\/accounting\/([a-f0-9-]{36})$/i);
+  if ((req.method === "GET" && pathname === "/api/admin/accounting")
+    || (req.method === "POST" && pathname === "/api/admin/accounting")
+    || (req.method === "PATCH" && accountingEntryMatch)) {
     const adminSession = await requireCatalogAdmin(req, res, config, "/admin/accounting");
     if (!adminSession) return;
+    if (req.method === "POST") {
+      let payload;
+      try {
+        payload = JSON.parse(await readRequestBody(req, 16 * 1024));
+      } catch {
+        send(res, 400, JSON.stringify({ ok: false, message: "Ungültige oder zu große Buchungsdaten." }), "application/json; charset=utf-8");
+        return;
+      }
+      if (!["income", "expense"].includes(payload?.kind)
+        || !Number.isSafeInteger(payload.amount)
+        || typeof payload.description !== "string"
+        || !payload.description.trim()
+        || payload.description.trim().length > 200
+        || typeof payload.sourceId !== "string"
+        || !/^[a-f0-9-]{36}$/i.test(payload.sourceId)) {
+        send(res, 400, JSON.stringify({ ok: false, message: "Bitte Buchungsart, gültigen Betrag, Beschreibung und Buchungskennung prüfen." }), "application/json; charset=utf-8");
+        return;
+      }
+      try {
+        const entry = accountingLedger.add({
+          kind: payload.kind,
+          category: "manual",
+          amount: payload.amount,
+          description: payload.description,
+          source: "manual",
+          sourceId: payload.sourceId,
+          bookedBy: adminSession.user?.global_name || adminSession.user?.username || "Web-Admin"
+        });
+        send(res, 201, JSON.stringify({ ok: true, entry }), "application/json; charset=utf-8");
+      } catch (error) {
+        if (/Betrag|Buchungsart|Beschreibung|Kategorie/.test(error.message)) {
+          send(res, 400, JSON.stringify({ ok: false, message: error.message }), "application/json; charset=utf-8");
+          return;
+        }
+        console.error("Web-Buchung konnte nicht gespeichert werden:", error.message);
+        send(res, 500, JSON.stringify({ ok: false, message: "Die Buchung konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+      }
+      return;
+    }
+    if (req.method === "PATCH") {
+      let payload;
+      try {
+        payload = JSON.parse(await readRequestBody(req, 16 * 1024));
+      } catch {
+        send(res, 400, JSON.stringify({ ok: false, message: "Ungültige oder zu große Korrekturdaten." }), "application/json; charset=utf-8");
+        return;
+      }
+      try {
+        const hasReplacement = payload?.replacement !== null && payload?.replacement !== undefined;
+        if (typeof payload?.reason !== "string"
+          || payload.reason.trim().length < 3
+          || payload.reason.trim().length > 200
+          || (hasReplacement && (!payload.replacement
+            || !["income", "expense"].includes(payload.replacement.kind)
+            || !Number.isSafeInteger(payload.replacement.amount)
+            || typeof payload.replacement.description !== "string"
+            || !payload.replacement.description.trim()
+            || payload.replacement.description.trim().length > 200))) {
+          send(res, 400, JSON.stringify({ ok: false, message: "Bitte Grund und Korrekturdaten prüfen." }), "application/json; charset=utf-8");
+          return;
+        }
+        const result = accountingLedger.correctEntry(accountingEntryMatch[1], {
+          by: adminSession.user?.global_name || adminSession.user?.username || "Web-Admin",
+          reason: payload.reason,
+          replacement: hasReplacement ? payload.replacement : null
+        });
+        send(res, 200, JSON.stringify({ ok: true, entry: result.entry, corrected: result.corrected }), "application/json; charset=utf-8");
+      } catch (error) {
+        const status = error.code === "NOT_FOUND" ? 404
+          : error.code === "ALREADY_VOIDED" ? 409
+            : error.code ? 500 : 400;
+        if (status === 500) console.error("Web-Buchungskorrektur konnte nicht gespeichert werden:", error.message);
+        const message = status === 500
+          ? "Die Änderung konnte nicht dauerhaft gespeichert werden. Bitte Admin informieren."
+          : error.message;
+        send(res, status, JSON.stringify({ ok: false, message }), "application/json; charset=utf-8");
+      }
+      return;
+    }
     try {
       accountingLedger.syncAllOrders(readAdminOrders());
       const entries = accountingLedger.read();
@@ -2484,13 +2812,19 @@ function startDiscordWelcomeBot() {
   client.on(Events.InteractionCreate, interaction => {
     const isNewFamilyCommand = interaction.isChatInputCommand() && interaction.commandName === "newfam";
     const isManualBookingCommand = interaction.isChatInputCommand() && interaction.commandName === "buchung";
+    const isCashCommand = interaction.isChatInputCommand() && interaction.commandName === "kasse";
+    const isVoidCommand = interaction.isChatInputCommand() && interaction.commandName === "storno";
     const handleInteraction = isNewFamilyCommand
       ? handleNewFamilyInteraction(interaction)
       : isManualBookingCommand
         ? handleManualBookingInteraction(interaction)
+        : isCashCommand
+          ? handleCashInteraction(interaction)
+          : isVoidCommand
+            ? handleVoidInteraction(interaction)
         : handleGatewayOrderInteraction(interaction);
     handleInteraction.catch(error => {
-      const isSlashCommand = isNewFamilyCommand || isManualBookingCommand;
+      const isSlashCommand = isNewFamilyCommand || isManualBookingCommand || isCashCommand || isVoidCommand;
       const context = isSlashCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
       console.error(`${context}:`, error.message);
       if (interaction.isRepliable() && !interaction.replied) {
@@ -2498,6 +2832,10 @@ function startDiscordWelcomeBot() {
           ? `Die Familieneinrichtung ist fehlgeschlagen: ${error.message}`
           : isManualBookingCommand
             ? `Buchung fehlgeschlagen: ${error.message}`
+            : isCashCommand
+              ? `Kasse fehlgeschlagen: ${error.message}`
+              : isVoidCommand
+                ? `Storno/Korrektur fehlgeschlagen: ${error.message}`
             : "Der Bot konnte diese Bestellaktion nicht verarbeiten. Bitte die Bestellübersicht öffnen oder den Server-Admin informieren.";
         const reply = isSlashCommand
           ? (interaction.deferred ? interaction.editReply({ content }) : interaction.reply({ content, ephemeral: true }))
