@@ -2053,13 +2053,27 @@ async function handleMaterialOrder(req, res) {
   const icName = String(payload.icName || "").trim();
   const phone = String(payload.phone || "").trim();
 
-  if (!Number.isFinite(technical) || !Number.isFinite(medical) || technical < 0 || medical < 0 || !icName || icName.length > 80 || !phone || phone.length > 40) {
+  if (!Number.isSafeInteger(technical) || !Number.isSafeInteger(medical)
+    || technical < 0 || medical < 0 || !icName || icName.length > 80 || !phone || phone.length > 40) {
     send(res, 400, JSON.stringify({ ok: false, message: "Bitte alle Felder korrekt ausfüllen." }), "application/json; charset=utf-8");
     return;
   }
 
   const totalMaterials = technical + medical;
-  const totalPrice = technical * 250 + medical * 150;
+  const subtotalPrice = technical * 250 + medical * 150;
+  if (!Number.isSafeInteger(totalMaterials) || !Number.isSafeInteger(subtotalPrice)) {
+    send(res, 400, JSON.stringify({ ok: false, message: "Die Materialmenge oder der Bestellwert ist zu hoch." }), "application/json; charset=utf-8");
+    return;
+  }
+
+  let pricing;
+  try {
+    pricing = priceOrderWithCoupon(subtotalPrice, payload.couponCode);
+  } catch (error) {
+    sendCouponOrderError(res, error, "Material-Coupon konnte nicht geprüft werden");
+    return;
+  }
+  const { totalPrice } = pricing;
   const order = {
     type: "material",
     technical,
@@ -2067,6 +2081,10 @@ async function handleMaterialOrder(req, res) {
     icName,
     phone,
     totalMaterials,
+    subtotalPrice,
+    discountAmount: pricing.discountAmount,
+    couponCode: pricing.couponCode,
+    couponPercent: pricing.couponPercent,
     totalPrice,
     customerName: icName,
     status: "Neu",
@@ -2077,7 +2095,7 @@ async function handleMaterialOrder(req, res) {
       `Gesamtanzahl: ${totalMaterials}\n` +
       `IC-Name: ${icName}\n` +
       `Handynummer: ${phone}\n` +
-      `Gesamtpreis: ${totalPrice} $\n` +
+      `${priceBreakdownMessage(pricing)}\n` +
       `Zeitstempel: ${new Date().toLocaleString("de-DE")}`
   };
   Object.assign(order, trackAdminOrder(order));
@@ -2090,11 +2108,11 @@ async function handleMaterialOrder(req, res) {
       saveMaterialOrderLocally(order);
       send(res, 200, JSON.stringify({
         ok: true,
-        total: totalPrice,
+        ...couponPriceResponse(pricing),
         orderCount: totalMaterials,
         channelId: ORDER_CHANNEL_ID,
         savedLocally: true,
-        message: "Bestellung wurde lokal gespeichert. Discord-Konfiguration fehlt noch."
+        message: `Bestellung wurde lokal gespeichert. Discord-Konfiguration fehlt noch. ${priceBreakdownMessage(pricing)}`
       }), "application/json; charset=utf-8");
       return;
     }
@@ -2102,11 +2120,11 @@ async function handleMaterialOrder(req, res) {
 
     send(res, 200, JSON.stringify({
       ok: true,
-      total: totalPrice,
+      ...couponPriceResponse(pricing),
       orderCount: totalMaterials,
       channelId: ORDER_CHANNEL_ID,
       savedLocally: false,
-      message: "Bestellung wurde erfolgreich an Discord gesendet."
+      message: `Bestellung wurde erfolgreich an Discord gesendet. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   } catch (error) {
     console.error("Material-Bestellung fehlgeschlagen:", error.message);
@@ -2114,11 +2132,11 @@ async function handleMaterialOrder(req, res) {
     saveMaterialOrderLocally(order);
     send(res, 200, JSON.stringify({
       ok: true,
-      total: totalPrice,
+      ...couponPriceResponse(pricing),
       orderCount: totalMaterials,
       channelId: ORDER_CHANNEL_ID,
       savedLocally: true,
-      message: "Bestellung wurde lokal gespeichert. Der Discord-Upload war nicht verfügbar."
+      message: `Bestellung wurde lokal gespeichert. Der Discord-Upload war nicht verfügbar. ${priceBreakdownMessage(pricing)}`
     }), "application/json; charset=utf-8");
   }
 }

@@ -18,11 +18,27 @@
     .card { border-color: color-mix(in srgb, var(--page-accent) 20%, var(--line)); }
     .highlight { color: var(--page-accent); }
     .summary { border-color: color-mix(in srgb, var(--page-accent) 30%, var(--line)); background: var(--page-accent-soft); }
+    .coupon-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; margin: 12px 0 4px; }
+    .coupon-field { display: grid; gap: 6px; min-width: 0; }
+    .coupon-field input { width: 100%; min-height: 44px; }
+    .coupon-apply { min-height: 44px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--tx); font: inherit; font-weight: 650; }
+    .coupon-apply:hover:not(:disabled) { border-color: var(--page-accent); }
+    .coupon-apply:disabled { opacity: .58; cursor: not-allowed; }
+    .coupon-feedback { min-height: 20px; margin: 4px 0 8px; color: var(--mut); font-size: .9rem; }
+    .coupon-feedback.success { color: var(--ok); }
+    .coupon-feedback.error { color: var(--bad); }
+    .coupon-discount strong { color: var(--ok); }
+    .summary-row[hidden] { display: none; }
     .cta { background: var(--page-accent); color: #1a1610; }
     input:focus, .quantity-control button:hover {
       border-color: var(--page-accent);
     }
     input:focus { box-shadow: 0 0 0 3px var(--page-accent-soft); }
+    .coupon-apply:focus-visible { outline: 3px solid var(--page-accent); outline-offset: 3px; }
+    @media (max-width: 380px) {
+      .coupon-entry { grid-template-columns: 1fr; }
+      .coupon-apply { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -82,7 +98,16 @@
           <div class="summary">
             <div class="summary-row"><span>Technische Materialien</span><strong id="summary-technical">0 × 250 $ = 0 $</strong></div>
             <div class="summary-row"><span>Medizinische Materialien</span><strong id="summary-medical">0 × 150 $ = 0 $</strong></div>
-            <div class="summary-row"><span>Gesamtpreis</span><strong id="summary-total">0 $</strong></div>
+            <div class="summary-row"><span>Zwischensumme</span><strong id="summary-subtotal">0 $</strong></div>
+            <div class="coupon-entry">
+              <label class="coupon-field" for="coupon-code">Rabattcode
+                <input id="coupon-code" name="couponCode" type="text" maxlength="32" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Code eingeben">
+              </label>
+              <button id="apply-coupon" class="coupon-apply" type="button">Einlösen</button>
+            </div>
+            <p id="coupon-feedback" class="coupon-feedback" role="status" aria-live="polite"></p>
+            <div id="coupon-discount-row" class="summary-row coupon-discount" hidden><span>Coupon-Rabatt</span><strong id="coupon-discount">0 $</strong></div>
+            <div class="summary-row"><span>Endpreis</span><strong id="summary-total">0 $</strong></div>
           </div>
 
           <button class="cta" type="submit">Bestellung senden</button>

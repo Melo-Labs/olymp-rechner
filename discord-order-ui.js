@@ -177,7 +177,7 @@ function buildMaterialOrderPayload(order) {
     field("Technik", formatCount(order.technical)),
     field("Medizin", formatCount(order.medical)),
     field("Stück", formatCount(order.totalMaterials)),
-    field("Gesamtpreis", formatMoney(order.totalPrice), false)
+    ...priceFields(order)
   ], "Neue Materialbestellung aus dem Rechner.");
 }
 

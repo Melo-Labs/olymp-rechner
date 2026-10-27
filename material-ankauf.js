@@ -3,10 +3,19 @@ const medicalInput = document.getElementById('medical');
 const totalMaterialsInput = document.getElementById('total-materials');
 const summaryTechnical = document.getElementById('summary-technical');
 const summaryMedical = document.getElementById('summary-medical');
+const summarySubtotal = document.getElementById('summary-subtotal');
 const summaryTotal = document.getElementById('summary-total');
+const couponInput = document.getElementById('coupon-code');
+const couponApplyButton = document.getElementById('apply-coupon');
+const couponFeedback = document.getElementById('coupon-feedback');
+const couponDiscountRow = document.getElementById('coupon-discount-row');
+const couponDiscountOutput = document.getElementById('coupon-discount');
 const form = document.getElementById('order-form');
 const statusBox = document.getElementById('status');
+const submitButton = form.querySelector('[type="submit"]');
 const numberFormatter = new Intl.NumberFormat('de-DE');
+let activeCoupon = null;
+let couponChecking = false;
 
 function formatPrice(value) {
   return `${numberFormatter.format(value)}$`;
@@ -31,12 +40,71 @@ function updateSummary() {
   const totalMaterials = technical + medical;
   const technicalPrice = technical * 250;
   const medicalPrice = medical * 150;
-  const totalPrice = technicalPrice + medicalPrice;
+  const subtotal = technicalPrice + medicalPrice;
+  const discount = activeCoupon && Number.isSafeInteger(subtotal)
+    ? Number((BigInt(subtotal) * BigInt(activeCoupon.percent) + 50n) / 100n)
+    : 0;
 
   totalMaterialsInput.value = totalMaterials;
   summaryTechnical.textContent = `${numberFormatter.format(technical)} × 250$ = ${formatPrice(technicalPrice)}`;
   summaryMedical.textContent = `${numberFormatter.format(medical)} × 150$ = ${formatPrice(medicalPrice)}`;
-  summaryTotal.textContent = formatPrice(totalPrice);
+  summarySubtotal.textContent = formatPrice(subtotal);
+  couponDiscountOutput.textContent = `−${formatPrice(discount)}`;
+  couponDiscountRow.hidden = !activeCoupon;
+  summaryTotal.textContent = formatPrice(subtotal - discount);
+  couponApplyButton.disabled = couponChecking || !couponInput.value.trim()
+    || !Number.isSafeInteger(subtotal) || subtotal < 1;
+}
+
+function setCouponFeedback(message, state = '') {
+  couponFeedback.textContent = message;
+  couponFeedback.className = `coupon-feedback${state ? ` ${state}` : ''}`;
+}
+
+async function applyCoupon() {
+  const code = couponInput.value.trim();
+  const technical = Number(technicalInput.value) || 0;
+  const medical = Number(medicalInput.value) || 0;
+  const subtotal = technical * 250 + medical * 150;
+  if (!code) {
+    activeCoupon = null;
+    updateSummary();
+    setCouponFeedback('Gib zuerst einen Coupon-Code ein.', 'error');
+    return false;
+  }
+  if (!Number.isSafeInteger(subtotal) || subtotal < 1) {
+    setCouponFeedback('Bitte gib zuerst eine gültige Materialmenge ein.', 'error');
+    return false;
+  }
+
+  couponChecking = true;
+  couponApplyButton.textContent = 'Prüfe …';
+  updateSummary();
+  try {
+    const response = await fetch('/api/coupons/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, subtotal })
+    });
+    const result = await response.json();
+    if (!response.ok || result.ok !== true || !result.coupon) {
+      throw new Error(result.message || 'Coupon-Code konnte nicht angewendet werden.');
+    }
+    activeCoupon = result.coupon;
+    couponInput.value = result.coupon.code;
+    updateSummary();
+    setCouponFeedback(`${result.coupon.percent}% Rabatt angewendet. Du sparst ${formatPrice(result.discountAmount)}.`, 'success');
+    return true;
+  } catch (error) {
+    activeCoupon = null;
+    updateSummary();
+    setCouponFeedback(error.message || 'Coupon-Code konnte nicht angewendet werden.', 'error');
+    return false;
+  } finally {
+    couponChecking = false;
+    couponApplyButton.textContent = 'Einlösen';
+    updateSummary();
+  }
 }
 
 [technicalInput, medicalInput].forEach((input) => {
@@ -77,6 +145,13 @@ document.querySelectorAll('[data-material-step]').forEach((button) => {
   });
 });
 
+couponInput.addEventListener('input', () => {
+  activeCoupon = null;
+  setCouponFeedback('');
+  updateSummary();
+});
+couponApplyButton.addEventListener('click', () => { void applyCoupon(); });
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const technical = Math.max(0, Number(technicalInput.value) || 0);
@@ -102,17 +177,25 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
+  const requestedCoupon = couponInput.value.trim();
+  if (requestedCoupon && requestedCoupon.toUpperCase() !== (activeCoupon?.code || '')) {
+    if (!await applyCoupon()) return;
+  }
+
   const payload = {
     technical,
     medical,
     icName,
     phone,
     totalMaterials: technical + medical,
-    totalPrice: technical * 250 + medical * 150
+    totalPrice: technical * 250 + medical * 150,
+    couponCode: couponInput.value.trim()
   };
 
   statusBox.textContent = 'Bestellung wird gesendet...';
   statusBox.className = 'status';
+  submitButton.disabled = true;
+  couponApplyButton.disabled = true;
 
   try {
     const response = await fetch('/api/material-bestellung', {
@@ -132,12 +215,17 @@ form.addEventListener('submit', async (event) => {
     form.reset();
     technicalInput.value = '0';
     medicalInput.value = '0';
+    activeCoupon = null;
     document.getElementById('ic-name').value = '';
     document.getElementById('phone').value = '';
+    setCouponFeedback('');
     updateSummary();
   } catch (error) {
     statusBox.textContent = error.message || 'Fehler beim Senden der Bestellung.';
     statusBox.className = 'status error';
+  } finally {
+    submitButton.disabled = false;
+    updateSummary();
   }
 });
 

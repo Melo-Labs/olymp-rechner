@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   buildCustomOrderPayload,
+  buildMaterialOrderPayload,
   buildStankOrderPayload
 } = require("../discord-order-ui");
 
@@ -26,6 +27,21 @@ test("shows coupon breakdown in STANK order embeds", () => {
 
   assert.equal(fields.find(field => field.name === "Zwischensumme").value, "1.000 $");
   assert.equal(fields.find(field => field.name === "Coupon").value, "OLYMP20 · 20% Rabatt");
+  assert.equal(fields.find(field => field.name === "Rabatt").value, "−200 $");
+  assert.equal(fields.find(field => field.name === "Endpreis").value, "800 $");
+});
+
+test("shows coupon breakdown in material order embeds", () => {
+  const payload = buildMaterialOrderPayload({
+    ...discountedOrder,
+    type: "material",
+    technical: 4,
+    medical: 0,
+    totalMaterials: 4
+  });
+  const fields = payload.embeds[0].fields;
+
+  assert.equal(fields.find(field => field.name === "Zwischensumme").value, "1.000 $");
   assert.equal(fields.find(field => field.name === "Rabatt").value, "−200 $");
   assert.equal(fields.find(field => field.name === "Endpreis").value, "800 $");
 });
