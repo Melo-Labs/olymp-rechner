@@ -1,1 +1,201 @@
-PLACEHOLDER_THEME
+/* =========================================================
+   OLYMP Design System — Apple HIG inspired craft
+   Refined dark identity, clearer hierarchy, better a11y
+   ========================================================= */
+
+@font-face {
+  font-family: "Orbitron";
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url(/img/fonts/orbitron-latin-500-normal.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Orbitron";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url(/img/fonts/orbitron-latin-700-normal.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Orbitron";
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+  src: url(/img/fonts/orbitron-latin-900-normal.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Exo 2";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url(/img/fonts/exo-2-latin-400-normal.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Exo 2";
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url(/img/fonts/exo-2-latin-600-normal.woff2) format("woff2");
+}
+
+:root {
+  /* Typography */
+  --display: "Orbitron", "Eurostile", system-ui, sans-serif;
+  --body: "Exo 2", system-ui, -apple-system, sans-serif;
+
+  /* Surfaces — tighter, more intentional dark scale */
+  --bg: #090a0c;
+  --bg-elevated: #0f1114;
+  --card: #14171b;
+  --card-elevated: #1a1e24;
+  --card-hover: #1e2329;
+
+  /* Text */
+  --tx: #f0f2f4;
+  --tx-secondary: #c5c9ce;
+  --mut: #8b9098;
+  --mut-strong: #a8adb5;
+
+  /* Borders & dividers */
+  --bd: rgba(255, 255, 255, 0.08);
+  --bd-strong: rgba(255, 255, 255, 0.14);
+  --bd-focus: rgba(228, 232, 238, 0.55);
+
+  /* Accent — cool neutral, not neon */
+  --ac: #e4e8ee;
+  --ac-soft: rgba(228, 232, 238, 0.12);
+  --ac-x: #0a0b0d;
+
+  /* Semantic */
+  --ok: #6dd4a0;
+  --ok-bg: rgba(109, 212, 160, 0.12);
+  --bad: #ff7b7b;
+  --bad-bg: rgba(255, 123, 123, 0.12);
+  --warn: #e8c07a;
+
+  /* Shadows — softer, layered */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 20px 40px -20px rgba(0, 0, 0, 0.7);
+  --shadow-focus: 0 0 0 3px rgba(228, 232, 238, 0.22);
+
+  /* Radii — consistent system */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-full: 999px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration: 0.18s;
+  --duration-slow: 0.28s;
+}
+
+html {
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---------- Background (calmer) ---------- */
+.bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 100% 80% at 50% 0%, #15181e 0%, transparent 55%),
+    radial-gradient(ellipse 80% 60% at 80% 100%, #12141a 0%, transparent 50%),
+    var(--bg);
+}
+
+/* Soft ambient glow — reduced intensity */
+.aurora {
+  position: absolute;
+  inset: 0;
+}
+.aurora i {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  will-change: transform;
+  opacity: 0.28;
+}
+.aurora i:nth-child(1) {
+  width: 50vmax;
+  height: 50vmax;
+  left: -12vmax;
+  top: -18vmax;
+  background: radial-gradient(circle, rgba(140, 150, 165, 0.4), transparent 70%);
+  animation: drift1 40s ease-in-out infinite alternate;
+}
+.aurora i:nth-child(2) {
+  width: 42vmax;
+  height: 42vmax;
+  right: -14vmax;
+  top: 15vh;
+  background: radial-gradient(circle, rgba(90, 95, 105, 0.35), transparent 70%);
+  animation: drift2 48s ease-in-out infinite alternate;
+}
+.aurora i:nth-child(3) {
+  width: 38vmax;
+  height: 38vmax;
+  left: 25%;
+  bottom: -20vmax;
+  background: radial-gradient(circle, rgba(120, 110, 100, 0.28), transparent 70%);
+  animation: drift3 55s ease-in-out infinite alternate;
+}
+
+@keyframes drift1 {
+  to { transform: translate3d(10vmax, 8vmax, 0) scale(1.08); }
+}
+@keyframes drift2 {
+  to { transform: translate3d(-8vmax, 10vmax, 0) scale(0.94); }
+}
+@keyframes drift3 {
+  to { transform: translate3d(-10vmax, -6vmax, 0) scale(1.1); }
+}
+
+/* Subtle grain / dots — very quiet */
+.dots {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(rgba(200, 205, 210, 0.12) 1px, transparent 1.5px) 0 0 / 32px 32px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000, transparent 80%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000, transparent 80%);
+  opacity: 0.55;
+}
+
+#net {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.18;
+}
+
+.vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.75));
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .aurora i {
+    animation: none !important;
+  }
+}
