@@ -77,7 +77,7 @@ function renderOrders() {
     title.append(heading, meta);
     const badge = document.createElement('span');
     badge.className = 'status';
-    const closed = order.status === 'Angenommen' || order.status === 'Abgelehnt';
+    const closed = order.status === 'Erledigt' || order.status === 'Abgelehnt';
     badge.textContent = closed ? `${order.status} · Abgeschlossen` : order.status || 'Neu';
     head.append(title, badge);
 
@@ -129,7 +129,7 @@ async function loadOrders() {
 }
 
 function updateStats() {
-  const open = orders.filter(order => !['Angenommen', 'Abgelehnt', 'Erledigt'].includes(order.status));
+  const open = orders.filter(order => !['Abgelehnt', 'Erledigt'].includes(order.status));
   const total = orders.reduce((sum, order) => sum + Number(order.totalPrice || 0), 0);
   statTotal.textContent = orders.length.toLocaleString('de-DE');
   statNew.textContent = orders.filter(order => order.status === 'Neu').length.toLocaleString('de-DE');

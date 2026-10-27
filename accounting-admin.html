@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Buchhaltung</title>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    :root{--bg:#0b0d10;--line:rgba(142,198,232,.18);--mut:#b4bec8;--text:#edf3fb;--accent:#8ec6e8}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:radial-gradient(circle at top,rgba(142,198,232,.14),transparent 30%),var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}
+    main{max-width:1100px;margin:0 auto;padding:32px 16px 64px}
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:24px}.topbar a{color:var(--text);text-decoration:none;font-weight:700}.topbar .back{margin-left:auto}
+    h1{margin:0 0 8px;font-size:clamp(1.8rem,5vw,3rem)}.lead,.hint,.meta{color:var(--mut);line-height:1.6}
+    .panel,.stat,.entry{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(21,25,29,.96),rgba(10,12,14,.96));box-shadow:0 24px 32px -28px rgba(0,0,0,.85)}
+    .panel{padding:20px;margin-top:20px}.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 18px}
+    select,button{min-height:44px;padding:9px 12px;border:1px solid rgba(142,198,232,.24);border-radius:9px;background:#101418;color:var(--text);font:inherit}
+    button{font-weight:700;cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible{outline:3px solid rgba(142,198,232,.55);outline-offset:2px}
+    .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}.stat{padding:16px}.stat strong{display:block;font-size:clamp(1.2rem,4vw,1.8rem);overflow-wrap:anywhere}.stat span{color:var(--mut);font-size:.9rem}
+    .entry-list{display:grid;gap:10px}.entry{padding:16px;box-shadow:none}.entry-head{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}.entry h2{margin:0;font-size:1.05rem}.amount{font-weight:800;white-space:nowrap}.income{color:#72d9b1}.expense{color:#ff9a9a}.entry p{margin:6px 0 0;color:var(--mut)}.empty{color:var(--mut);padding:16px 4px}
+    .status-message{min-height:24px;margin:12px 0 0}.status-message.error{color:#ff8f8f}.status-message.success{color:#72d9b1}
+    @media(max-width:620px){main{padding-top:22px}.panel{padding:14px}.stats{grid-template-columns:1fr}.stat{padding:12px}.toolbar select,.toolbar button{flex:1 1 100%}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+  <link rel="stylesheet" href="/admin/nav.css">
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <span class="admin-menu-slot" aria-hidden="true"></span><strong>OLYMP · SHOP ADMIN</strong>
+      <span class="admin-menu-hint">Menü links öffnen</span>
+      <a class="back" href="/admin/orders">← Bestellungen</a>
+    </div>
+    <h1>Buchhaltung</h1>
+    <p class="lead">Ein gemeinsames Hauptbuch für bestätigte Bestellungen, Ankauf-Ausgaben und manuelle Discord-Buchungen.</p>
+    <section class="panel">
+      <div class="toolbar">
+        <label for="period-filter">Zeitraum:</label>
+        <select id="period-filter">
+          <option value="heute">Heute</option>
+          <option value="woche">Diese Woche</option>
+          <option value="monat">Dieser Monat</option>
+          <option value="gesamt" selected>Gesamt</option>
+        </select>
+        <button id="refresh-ledger" type="button">Aktualisieren</button>
+      </div>
+      <div class="stats">
+        <div class="stat"><strong id="total-income">–</strong><span>Einnahmen</span></div>
+        <div class="stat"><strong id="total-expense">–</strong><span>Ausgaben</span></div>
+        <div class="stat"><strong id="net-balance">–</strong><span>Saldo</span></div>
+      </div>
+      <p id="status-message" class="status-message" aria-live="polite"></p>
+      <div id="entries" class="entry-list" aria-live="polite">Buchungen werden geladen …</div>
+      <p id="entry-limit" class="hint"></p>
+      <p class="hint">Bestellungen werden erst bei „Angenommen“ gebucht. Abgelehnte oder zurückgesetzte Bestellungen werden aus dem Saldo storniert und bleiben nachvollziehbar protokolliert. Der Saldo ist eine Bestell-/Buchungssumme, kein bestätigter Kontostand.</p>
+    </section>
+  </main>
+  <script src="/admin/accounting.js"></script><script src="/admin/nav.js"></script>
+</body>
+</html>

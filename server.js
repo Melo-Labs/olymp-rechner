@@ -15,6 +15,7 @@ const {
   PermissionFlagsBits,
   SlashCommandBuilder
 } = require("discord.js");
+const { CATEGORY_LABELS, createLedger, periodRange, summarize } = require("./ledger");
 const {
   ORDER_STATUS_LABELS,
   isAdminOrderClosed,
@@ -74,8 +75,13 @@ const SHOP_CONTENT = {
     }
   ]
 };
-const ACCOUNTING_ORDERS_FILE = path.join(ROOT, "data", "accounting-orders.json");
 const ACCOUNTING_REPORTS_FILE = path.join(ROOT, "data", "accounting-reports.json");
+const ACCOUNTING_LEDGER_FILE = process.env.ACCOUNTING_LEDGER_FILE
+  ? (path.isAbsolute(process.env.ACCOUNTING_LEDGER_FILE)
+    ? process.env.ACCOUNTING_LEDGER_FILE
+    : path.resolve(ROOT, process.env.ACCOUNTING_LEDGER_FILE))
+  : path.join(ROOT, "data", "accounting-ledger.json");
+const accountingLedger = createLedger(ACCOUNTING_LEDGER_FILE);
 
 function resolvePersistentDataFile(envKey, fallbackPath, legacyPath) {
   const configured = process.env[envKey]?.trim();
@@ -119,6 +125,8 @@ const staticFiles = new Map([
   ["/admin/nav.js", "admin-nav.js"],
   ["/admin/orders", "orders-admin.html"],
   ["/admin/orders.js", "orders-admin.js"],
+  ["/admin/accounting", "accounting-admin.html"],
+  ["/admin/accounting.js", "accounting-admin.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/script.js", "script.js"],
   ["/style.css", "style.css"],
@@ -560,6 +568,17 @@ function updateAdminOrder(orderId, updates) {
   if (index < 0) return null;
   orders[index] = { ...orders[index], ...updates };
   writeAdminOrders(orders);
+  if (Object.hasOwn(updates, "status")) {
+    try {
+      accountingLedger.syncOrder(orders[index]);
+    } catch (error) {
+      console.error("Hauptbuch konnte nicht mit der Bestelländerung synchronisiert werden:", error.message);
+      const syncError = new Error("Bestellstatus wurde gespeichert, aber die Buchhaltung konnte nicht synchronisiert werden.");
+      syncError.code = "ACCOUNTING_SYNC_FAILED";
+      syncError.cause = error;
+      throw syncError;
+    }
+  }
   return orders[index];
 }
 
@@ -602,29 +621,6 @@ function writeAccountingJson(filePath, value) {
   fs.renameSync(temporaryPath, filePath);
 }
 
-function readAccountingOrders() {
-  if (!fs.existsSync(ACCOUNTING_ORDERS_FILE)) return [];
-  const orders = JSON.parse(fs.readFileSync(ACCOUNTING_ORDERS_FILE, "utf8"));
-  if (!Array.isArray(orders)) throw new Error("Buchhaltungsdatei enthält keine Bestellliste.");
-  return orders;
-}
-
-function recordAccountingOrder(type, totalPrice, createdAt) {
-  if (!["material", "stank", "custom"].includes(type) || !Number.isSafeInteger(totalPrice) || totalPrice < 0) {
-    throw new Error("Ungültige Buchhaltungsdaten für Bestellung.");
-  }
-  const order = {
-    id: crypto.randomUUID(),
-    type,
-    totalPrice,
-    createdAt
-  };
-  const orders = readAccountingOrders();
-  orders.push(order);
-  writeAccountingJson(ACCOUNTING_ORDERS_FILE, orders);
-  return order.id;
-}
-
 function readAccountingReports() {
   if (!fs.existsSync(ACCOUNTING_REPORTS_FILE)) {
     const initial = { startedOn: accountingDateKey(), sentDates: [] };
@@ -650,41 +646,21 @@ function accountingDateIsDue(date = new Date()) {
 }
 
 function summarizeAccountingDate(dateKey, orders) {
-  const totals = new Map([
-    ["material", { label: "Materialbestellungen", total: 0n, count: 0 }],
-    ["stank", { label: "STANK-Bestellungen", total: 0n, count: 0 }],
-    ["custom", { label: "Wunschbestellungen", total: 0n, count: 0 }]
-  ]);
-  let total = 0n;
-  let count = 0;
-
-  for (const order of orders) {
-    const timestamp = typeof order?.createdAt === "string" ? new Date(order.createdAt) : null;
-    if (!order || !Number.isSafeInteger(order.totalPrice) || order.totalPrice < 0
-      || !timestamp || Number.isNaN(timestamp.getTime()) || accountingDateKey(timestamp) !== dateKey) continue;
-    const category = totals.get(order.type);
-    if (!category) continue;
-    category.total += BigInt(order.totalPrice);
-    category.count += 1;
-    total += BigInt(order.totalPrice);
-    count += 1;
-  }
-
-  return { total, count, categories: [...totals.values()] };
+  return summarize(orders, { from: dateKey, to: dateKey });
 }
 
 async function sendAccountingReport(dateKey, orders) {
   const summary = summarizeAccountingDate(dateKey, orders);
   const embed = {
     title: `Tagesbuchhaltung · ${dateKey.split("-").reverse().join(".")}`,
-    description: `**Bestellsumme: ${summary.total.toLocaleString("de-DE")} $**\n${summary.count} Bestellungen\n\nDie Summe zeigt erfasste Bestellbeträge, keine bestätigten Zahlungseingänge.`,
+    description: `**Einnahmen: ${summary.income.toLocaleString("de-DE")} $**\n**Ausgaben: ${summary.expense.toLocaleString("de-DE")} $**\n**Saldo: ${summary.net.toLocaleString("de-DE")} $**\n${summary.count} Buchungen`,
     color: 0x3978d4,
-    fields: summary.categories.map(category => ({
-      name: category.label,
-      value: `${category.total.toLocaleString("de-DE")} $ · ${category.count} Bestellungen`,
+    fields: Object.entries(summary.categories).map(([category, totals]) => ({
+      name: CATEGORY_LABELS[category] || category,
+      value: `+${totals.income.toLocaleString("de-DE")} $ / −${totals.expense.toLocaleString("de-DE")} $ · ${totals.count} Buchungen`,
       inline: true
     })),
-    footer: { text: "Ankauf-Angebote sind nicht enthalten." },
+    footer: { text: "Abgelehnte und offene Bestellungen sind nicht gebucht." },
     timestamp: new Date().toISOString()
   };
   const result = await postToDiscordChannel(
@@ -713,7 +689,7 @@ async function runDailyAccountingReport() {
     }
     if (reportDate > latestClosedDate) return;
 
-    await sendAccountingReport(reportDate, readAccountingOrders());
+    await sendAccountingReport(reportDate, accountingLedger.read());
     state.sentDates.push(reportDate);
     writeAccountingJson(ACCOUNTING_REPORTS_FILE, state);
     lastAccountingReportError = "";
@@ -1333,8 +1309,73 @@ async function handleHttpNewFamily(payload, config) {
   return familyCreatedMessage(familyName, result);
 }
 
+function addManualAccountingEntry(guildId, roleIds, kind, amount, description, bookedBy, sourceId) {
+  const config = discordConfig();
+  if (!memberCanManageOrders(guildId, roleIds, config)) {
+    throw new Error("Nur Mitglieder mit der Katalog-Admin-Rolle dürfen Buchungen erfassen.");
+  }
+  if (kind !== "income" && kind !== "expense") {
+    throw new Error("Buchungsart muss Einnahme oder Ausgabe sein.");
+  }
+  const entry = accountingLedger.add({
+    kind,
+    category: "manual",
+    amount,
+    description,
+    source: "manual",
+    bookedBy,
+    sourceId
+  });
+  const summary = summarize(accountingLedger.read());
+  const label = kind === "income" ? "Einnahme" : "Ausgabe";
+  return {
+    entry,
+    content: `${label} über ${amount.toLocaleString("de-DE")} $ gebucht. Aktueller Saldo: ${summary.net.toLocaleString("de-DE")} $.`
+  };
+}
+
+async function handleManualBookingInteraction(interaction) {
+  const config = discordConfig();
+  const roleIds = interaction.member?.roles?.cache
+    ? [...interaction.member.roles.cache.keys()]
+    : [];
+  if (!memberCanManageOrders(interaction.guildId, roleIds, config)) {
+    await interaction.reply({
+      content: "Nur Mitglieder mit der Katalog-Admin-Rolle dürfen Buchungen erfassen.",
+      ephemeral: true
+    });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  const result = addManualAccountingEntry(
+    interaction.guildId,
+    roleIds,
+    interaction.options.getString("art", true),
+    interaction.options.getInteger("betrag", true),
+    interaction.options.getString("beschreibung", true),
+    actorNameFromMember(interaction.member),
+    interaction.id
+  );
+  await interaction.editReply({ content: result.content });
+}
+
+async function handleHttpManualBooking(payload) {
+  const roleIds = Array.isArray(payload.member?.roles) ? payload.member.roles : [];
+  const options = Object.fromEntries((payload.data?.options || []).map(option => [option.name, option.value]));
+  const result = addManualAccountingEntry(
+    payload.guild_id,
+    roleIds,
+    options.art,
+    options.betrag,
+    options.beschreibung,
+    actorNameFromMember(payload.member),
+    payload.id
+  );
+  return result.content;
+}
+
 async function registerNewFamilyCommand(client, guildId) {
-  const command = new SlashCommandBuilder()
+  const familyCommand = new SlashCommandBuilder()
     .setName("newfam")
     .setDescription("Erstellt einen privaten Familienkanal mit passender Rolle.")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -1348,12 +1389,39 @@ async function registerNewFamilyCommand(client, guildId) {
     )
     .toJSON();
   const commands = await client.application.commands.fetch({ guildId });
-  const existingCommand = commands.find(existing => existing.name === command.name);
-  if (existingCommand) {
-    await existingCommand.edit(command);
-    return;
+  const manualBookingCommand = new SlashCommandBuilder()
+    .setName("buchung")
+    .setDescription("Erfasst eine Einnahme oder Ausgabe in der Buchhaltung.")
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("art")
+      .setDescription("Einnahme oder Ausgabe")
+      .setRequired(true)
+      .addChoices(
+        { name: "Einnahme", value: "income" },
+        { name: "Ausgabe", value: "expense" }
+      ))
+    .addIntegerOption(option => option
+      .setName("betrag")
+      .setDescription("Betrag in Dollar, ohne Cent")
+      .setRequired(true)
+      .setMinValue(1)
+      .setMaxValue(1_000_000_000))
+    .addStringOption(option => option
+      .setName("beschreibung")
+      .setDescription("Wofür ist die Buchung?")
+      .setRequired(true)
+      .setMaxLength(100))
+    .toJSON();
+
+  for (const command of [familyCommand, manualBookingCommand]) {
+    const existingCommand = commands.find(existing => existing.name === command.name);
+    if (existingCommand) {
+      await existingCommand.edit(command);
+    } else {
+      await client.application.commands.create(command, guildId);
+    }
   }
-  await client.application.commands.create(command, guildId);
 }
 
 async function finishStatusButton(payload, orderId, statusKey, actorName) {
@@ -1366,8 +1434,10 @@ async function finishStatusButton(payload, orderId, statusKey, actorName) {
       await followupInteraction(payload, "Diese Bestellnachricht ist nicht mehr verfügbar.");
       return;
     }
-    console.error("Bestellstatus konnte nicht gespeichert werden:", error.message);
-    await followupInteraction(payload, "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.");
+    console.error("Discord-Bestellnachricht und/oder Buchhaltung konnten nicht aktualisiert werden:", error.message);
+    await followupInteraction(payload, error.code === "ACCOUNTING_SYNC_FAILED"
+      ? error.message
+      : "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.");
   }
 }
 
@@ -1439,6 +1509,19 @@ async function handleDiscordInteraction(req, res) {
       })
       .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
       .catch(error => console.error("Discord-Antwort auf /newfam fehlgeschlagen:", error.message));
+    return;
+  }
+
+  if (payload.type === 2 && payload.data?.name === "buchung") {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void Promise.resolve()
+      .then(() => handleHttpManualBooking(payload))
+      .catch(error => {
+        console.error("Discord-Buchung fehlgeschlagen:", error.message);
+        return `Buchung fehlgeschlagen: ${error.message}`;
+      })
+      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
+      .catch(error => console.error("Discord-Antwort auf /buchung fehlgeschlagen:", error.message));
     return;
   }
 
@@ -1563,6 +1646,8 @@ async function handleGatewayOrderInteraction(interaction) {
       await interaction.followUp({
         content: error.code === "NOT_FOUND"
           ? "Diese Bestellnachricht ist nicht mehr verfügbar."
+          : error.code === "ACCOUNTING_SYNC_FAILED"
+            ? error.message
           : "Der Bestellstatus konnte nicht gespeichert werden. Bitte Admin informieren.",
         ephemeral: true
       });
@@ -1624,7 +1709,6 @@ async function handleMaterialOrder(req, res) {
   };
   Object.assign(order, trackAdminOrder(order));
   const discordPayload = buildMaterialOrderPayload(order);
-  recordAccountingOrder("material", totalPrice, order.createdAt);
 
   try {
     const result = await postToDiscordChannel(discordPayload, ORDER_CHANNEL_ID, false);
@@ -1824,7 +1908,6 @@ async function handleStankOrder(req, res) {
       `Gesamtpreis: ${totalPrice.toLocaleString("de-DE")} $`
   };
   Object.assign(order, trackAdminOrder(order));
-  recordAccountingOrder("stank", totalPrice, order.createdAt);
   try {
     const result = await postToDiscordChannel(
       buildStankOrderPayload(order),
@@ -1957,7 +2040,6 @@ async function handleCustomOrder(req, res) {
       `\nGesamtsumme: ${totalPrice} $`
   };
   Object.assign(order, trackAdminOrder(order));
-  recordAccountingOrder("custom", totalPrice, order.createdAt);
   try {
     const result = await postToDiscordChannel(
       buildCustomOrderPayload(order),
@@ -2092,7 +2174,12 @@ async function handleRequest(req, res) {
       });
     } catch (error) {
       console.error("Bestellstatus konnte nicht gespeichert werden:", error.message);
-      send(res, 500, JSON.stringify({ ok: false, message: "Der Bestellstatus konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+      send(res, 500, JSON.stringify({
+        ok: false,
+        message: error.code === "ACCOUNTING_SYNC_FAILED"
+          ? error.message
+          : "Der Bestellstatus konnte nicht gespeichert werden."
+      }), "application/json; charset=utf-8");
       return;
     }
     if (!order) {
@@ -2126,6 +2213,39 @@ async function handleRequest(req, res) {
       }
     }
     send(res, 200, JSON.stringify({ ok: true, order, discordSynced, warning }), "application/json; charset=utf-8");
+    return;
+  }
+  if (req.method === "GET" && pathname === "/api/admin/accounting") {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/accounting");
+    if (!adminSession) return;
+    try {
+      accountingLedger.syncAllOrders(readAdminOrders());
+      const entries = accountingLedger.read();
+      const period = url.searchParams.get("period") || "gesamt";
+      if (!["heute", "woche", "monat", "gesamt"].includes(period)) {
+        send(res, 400, JSON.stringify({ ok: false, message: "Ungültiger Buchhaltungszeitraum." }), "application/json; charset=utf-8");
+        return;
+      }
+      const range = periodRange(period);
+      const summary = summarize(entries, range);
+      const visibleEntries = entries
+        .filter(entry => {
+          if (!range.from && !range.to) return true;
+          const date = accountingDateKey(new Date(entry.bookedAt));
+          return (!range.from || date >= range.from) && (!range.to || date <= range.to);
+        })
+        .sort((left, right) => Date.parse(right.bookedAt) - Date.parse(left.bookedAt));
+      send(res, 200, JSON.stringify({
+        ok: true,
+        period: range.label,
+        summary,
+        entries: visibleEntries.slice(0, 500),
+        totalEntries: visibleEntries.length
+      }), "application/json; charset=utf-8");
+    } catch (error) {
+      console.error("Buchhaltung konnte nicht geladen werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Die Buchhaltung konnte nicht geladen werden." }), "application/json; charset=utf-8");
+    }
     return;
   }
   if (req.method === "GET" && pathname === "/api/shop/products") {
@@ -2300,6 +2420,12 @@ async function handleRequest(req, res) {
     serveStatic(req, res, pathname);
     return;
   }
+  if (pathname === "/admin/accounting" || pathname === "/admin/accounting.js") {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/accounting");
+    if (!adminSession) return;
+    serveStatic(req, res, pathname);
+    return;
+  }
   if (pathname === "/" || pathname === "/index.html" || pathname === "/ankauf.html" || pathname === "/ankauf.js" || pathname === "/material-ankauf.html" || pathname === "/material-ankauf.js" || pathname === "/stank-kauf.html" || pathname === "/stank-kauf.js" || pathname === "/freie-bestellung.html" || pathname === "/freie-bestellung.js" || pathname === "/theme.css" || pathname === "/shop.css" || pathname === "/forms.css" || pathname === "/bg.js" || pathname.startsWith("/img/")) {
     serveStatic(req, res, pathname === "/index.html" ? "/index.html" : pathname);
     return;
@@ -2347,9 +2473,9 @@ function startDiscordWelcomeBot() {
   client.once(Events.ClientReady, readyClient => {
     console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
     registerNewFamilyCommand(readyClient, config.guildId).then(() => {
-      console.log("Discord-Slash-Command /newfam ist registriert.");
+      console.log("Discord-Slash-Commands /newfam und /buchung sind registriert.");
     }).catch(error => {
-      console.error("Discord-Slash-Command /newfam konnte nicht registriert werden:", error.message);
+      console.error("Discord-Slash-Commands konnten nicht registriert werden:", error.message);
     });
   });
   client.on(Events.Error, error => {
@@ -2357,17 +2483,23 @@ function startDiscordWelcomeBot() {
   });
   client.on(Events.InteractionCreate, interaction => {
     const isNewFamilyCommand = interaction.isChatInputCommand() && interaction.commandName === "newfam";
+    const isManualBookingCommand = interaction.isChatInputCommand() && interaction.commandName === "buchung";
     const handleInteraction = isNewFamilyCommand
       ? handleNewFamilyInteraction(interaction)
-      : handleGatewayOrderInteraction(interaction);
+      : isManualBookingCommand
+        ? handleManualBookingInteraction(interaction)
+        : handleGatewayOrderInteraction(interaction);
     handleInteraction.catch(error => {
-      const context = isNewFamilyCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
+      const isSlashCommand = isNewFamilyCommand || isManualBookingCommand;
+      const context = isSlashCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
       console.error(`${context}:`, error.message);
       if (interaction.isRepliable() && !interaction.replied) {
         const content = isNewFamilyCommand
           ? `Die Familieneinrichtung ist fehlgeschlagen: ${error.message}`
-          : "Der Bot konnte diese Bestellaktion nicht verarbeiten. Bitte die Bestellübersicht öffnen oder den Server-Admin informieren.";
-        const reply = isNewFamilyCommand
+          : isManualBookingCommand
+            ? `Buchung fehlgeschlagen: ${error.message}`
+            : "Der Bot konnte diese Bestellaktion nicht verarbeiten. Bitte die Bestellübersicht öffnen oder den Server-Admin informieren.";
+        const reply = isSlashCommand
           ? (interaction.deferred ? interaction.editReply({ content }) : interaction.reply({ content, ephemeral: true }))
           : (interaction.deferred
             ? interaction.followUp({ content, ephemeral: true })
@@ -2419,5 +2551,11 @@ server.listen(PORT, HOST, () => {
   console.log(`Olymp Rechner läuft auf http://${HOST}:${PORT}`);
   if (!configIsReady(discordConfig())) console.log("Discord OAuth ist noch nicht konfiguriert. Bitte .env ausfüllen.");
   startDiscordWelcomeBot();
+  try {
+    const syncedOrders = accountingLedger.syncAllOrders(readAdminOrders());
+    if (syncedOrders) console.log(`${syncedOrders} bestehende Bestellung(en) in die Buchhaltung übernommen.`);
+  } catch (error) {
+    console.error("Bestehende Bestellungen konnten nicht mit der Buchhaltung synchronisiert werden:", error.message);
+  }
   void runDailyAccountingReport();
 });

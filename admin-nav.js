@@ -5,7 +5,8 @@
   const links = [
     ['/admin/catalog', 'Shop-Produkte'],
     ['/admin/buyback', 'Ankauf-Produkte'],
-    ['/admin/orders', 'Bestellverwaltung']
+    ['/admin/orders', 'Bestellverwaltung'],
+    ['/admin/accounting', 'Buchhaltung']
   ];
   const button = document.createElement('button');
   button.type = 'button';

@@ -6,7 +6,8 @@
     "node": ">=18.17"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "discord-interactions": "^4.4.0",
