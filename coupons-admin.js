@@ -136,7 +136,10 @@ couponForm.addEventListener('submit', async event => {
     const usage = result.coupon.maxUses === null
       ? 'ohne Einlösungslimit'
       : `für ${result.coupon.maxUses} Einlösungen`;
-    showStatus(`Coupon ${result.coupon.code} mit ${result.coupon.percent} % Rabatt wurde ${usage} erstellt.`, 'success');
+    const notification = result.notificationSent === false
+      ? ' Die Discord-Nachricht konnte nicht gesendet werden.'
+      : '';
+    showStatus(`Coupon ${result.coupon.code} mit ${result.coupon.percent} % Rabatt wurde ${usage} erstellt.${notification}`, result.notificationSent === false ? 'error' : 'success');
   } catch (error) {
     showStatus(error.message || 'Coupon konnte nicht erstellt werden.', 'error');
   } finally {

@@ -61,6 +61,7 @@ const ORDER_CHANNEL_ID = process.env.DISCORD_ORDER_CHANNEL_ID || "15584268704653
 const STANK_ORDER_CHANNEL_ID = "1558497954921193592";
 const CUSTOM_ORDER_CHANNEL_ID = "1558508937400291338";
 const SELL_OFFER_CHANNEL_ID = process.env.DISCORD_SELL_OFFER_CHANNEL_ID || "1558812539805110434";
+const COUPON_NOTIFICATION_CHANNEL_ID = "1564934131442257961";
 const ORDER_DELIVERY_TARGETS = {
   material: { channelId: ORDER_CHANNEL_ID, archiveFile: "material-bestellungen.json" },
   stank: { channelId: STANK_ORDER_CHANNEL_ID, archiveFile: "stank-bestellungen.json" },
@@ -1491,6 +1492,37 @@ async function handleNewFamilyInteraction(interaction) {
   await interaction.editReply({ content: familyCreatedMessage(familyName, result) });
 }
 
+async function handleDeleteFamilyInteraction(interaction) {
+  const config = discordConfig();
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId) {
+    await interaction.reply({
+      content: "Dieser Befehl kann nur auf dem konfigurierten Discord-Server verwendet werden.",
+      ephemeral: true
+    });
+    return;
+  }
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({
+      content: "Nur Server-Admins dürfen Familien löschen.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const familyName = interaction.options.getString("name", true).trim();
+  if (!familySlug(familyName)) {
+    await interaction.reply({
+      content: "Bitte gib einen gültigen Familiennamen ein.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const result = await deleteFamily(interaction.guild, familyName);
+  await interaction.editReply({ content: familyDeletedMessage(familyName, result) });
+}
+
 function familySlug(familyName) {
   return String(familyName || "")
     .toLowerCase()
@@ -1615,6 +1647,78 @@ async function createFamily(guild, userId, familyName) {
   return { channelId: createdChannel.id, roleId: createdRole.id };
 }
 
+function familyDeletedMessage(familyName, result) {
+  const deleted = [];
+  if (result.channelDeleted) deleted.push("der Familienkanal");
+  if (result.roleDeleted) deleted.push("die Familienrolle");
+  return `Familie **${familyName}** wurde gelöscht (${deleted.join(" und ")}).`;
+}
+
+async function deleteFamily(guild, familyName) {
+  const channelName = familySlug(familyName);
+  const [channels, roles] = await Promise.all([
+    guild.channels.fetch(),
+    guild.roles.fetch()
+  ]);
+  const categories = channels.filter(channel =>
+    channel?.type === ChannelType.GuildCategory
+    && channel.name.toLowerCase() === FAMILY_CATEGORY_NAME.toLowerCase()
+  );
+  if (categories.size > 1) {
+    throw new Error(`Es gibt mehrere Kategorien namens „${FAMILY_CATEGORY_NAME}“. Bitte bereinige die doppelten Kategorien zuerst.`);
+  }
+  const category = categories.first();
+  if (!category) {
+    throw new Error(`Die Kategorie „${FAMILY_CATEGORY_NAME}“ wurde nicht gefunden. Es wurde nichts gelöscht.`);
+  }
+
+  const matchingRoles = roles.filter(role => role.name.toLowerCase() === familyName.toLowerCase());
+  const matchingChannels = channels.filter(channel =>
+    channel?.type === ChannelType.GuildText
+    && channel.parentId === category.id
+    && channel.name === channelName
+  );
+  if (matchingRoles.size > 1 || matchingChannels.size > 1) {
+    throw new Error("Es wurden mehrere passende Familienrollen oder -kanäle gefunden. Bitte bereinige die Duplikate zuerst.");
+  }
+  const role = matchingRoles.first();
+  const channel = matchingChannels.first();
+  if (!role && !channel) {
+    throw new Error(`Die Familie „${familyName}“ wurde nicht gefunden. Es wurde nichts gelöscht.`);
+  }
+
+  const botMember = await guild.members.fetchMe();
+  const requiredPermissions = [
+    channel && [PermissionFlagsBits.ManageChannels, "Kanäle verwalten"],
+    role && [PermissionFlagsBits.ManageRoles, "Rollen verwalten"]
+  ].filter(Boolean);
+  const missingPermissions = requiredPermissions
+    .filter(([permission]) => !botMember.permissions.has(permission))
+    .map(([, label]) => label);
+  if (missingPermissions.length) {
+    throw new Error(`Dem Bot fehlen die Serverberechtigungen: ${missingPermissions.join(" und ")}.`);
+  }
+
+  let channelDeleted = false;
+  if (channel) {
+    await channel.delete(`Familie ${familyName} durch /delfam gelöscht`);
+    channelDeleted = true;
+  }
+  let roleDeleted = false;
+  if (role) {
+    try {
+      await role.delete(`Familie ${familyName} durch /delfam gelöscht`);
+      roleDeleted = true;
+    } catch (error) {
+      if (channelDeleted) {
+        throw new Error(`Der Familienkanal wurde gelöscht, aber die Rolle konnte nicht gelöscht werden: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+  return { channelDeleted, roleDeleted };
+}
+
 async function handleHttpNewFamily(payload, config) {
   const isAdmin = (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n;
   const familyName = String(payload.data?.options?.find(option => option.name === "name")?.value || "").trim();
@@ -1626,6 +1730,19 @@ async function handleHttpNewFamily(payload, config) {
   const guild = await discordGatewayClient.guilds.fetch(config.guildId);
   const result = await createFamily(guild, payload.member.user.id, familyName);
   return familyCreatedMessage(familyName, result);
+}
+
+async function handleHttpDeleteFamily(payload, config) {
+  const isAdmin = (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n;
+  const familyName = String(payload.data?.options?.find(option => option.name === "name")?.value || "").trim();
+  if (payload.guild_id !== config.guildId || !isAdmin) {
+    return "Nur Server-Admins dürfen Familien löschen.";
+  }
+  if (!familySlug(familyName)) return "Bitte gib einen gültigen Familiennamen ein.";
+  if (!discordGatewayClient?.isReady()) return "Der Bot ist noch nicht verbunden. Bitte in Kürze erneut versuchen.";
+  const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+  const result = await deleteFamily(guild, familyName);
+  return familyDeletedMessage(familyName, result);
 }
 
 function addManualAccountingEntry(guildId, roleIds, kind, amount, description, bookedBy, sourceId) {
@@ -1879,6 +1996,19 @@ async function registerNewFamilyCommand(client, guildId) {
         .setMaxLength(100)
     )
     .toJSON();
+  const deleteFamilyCommand = new SlashCommandBuilder()
+    .setName("delfam")
+    .setDescription("Löscht den Familienkanal und die passende Familienrolle.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option =>
+      option
+        .setName("name")
+        .setDescription("Name der zu löschenden Familie")
+        .setRequired(true)
+        .setMaxLength(100)
+    )
+    .toJSON();
   const commands = await client.application.commands.fetch({ guildId });
   const manualBookingCommand = new SlashCommandBuilder()
     .setName("buchung")
@@ -1963,7 +2093,7 @@ async function registerNewFamilyCommand(client, guildId) {
     .setDMPermission(false)
     .toJSON();
 
-  for (const command of [familyCommand, manualBookingCommand, cashCommand, voidCommand, livenessCommand, healthCommand]) {
+  for (const command of [familyCommand, deleteFamilyCommand, manualBookingCommand, cashCommand, voidCommand, livenessCommand, healthCommand]) {
     const existingCommand = commands.find(existing => existing.name === command.name);
     if (existingCommand) {
       await existingCommand.edit(command);
@@ -2069,6 +2199,18 @@ async function handleDiscordInteraction(req, res) {
       })
       .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
       .catch(error => console.error("Discord-Antwort auf /newfam fehlgeschlagen:", error.message));
+    return;
+  }
+
+  if (payload.type === 2 && payload.data?.name === "delfam") {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void handleHttpDeleteFamily(payload, config)
+      .catch(error => {
+        console.error("Discord-Slash-Command fehlgeschlagen:", error.message);
+        return `Die Familie konnte nicht vollständig gelöscht werden: ${error.message}`;
+      })
+      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
+      .catch(error => console.error("Discord-Antwort auf /delfam fehlgeschlagen:", error.message));
     return;
   }
 
@@ -2733,7 +2875,26 @@ async function handleRequest(req, res) {
           createdBy: String(adminSession.user?.global_name || adminSession.user?.username || "Web-Admin").slice(0, 80)
         };
         writeAccountingJson(SHOP_COUPONS_FILE, [...coupons, coupon]);
-        send(res, 201, JSON.stringify({ ok: true, coupon: couponWithUsage(coupon, 0) }), "application/json; charset=utf-8");
+        let notificationSent = true;
+        try {
+          const uses = coupon.maxUses === null ? "Unbegrenzt viele Einlösungen" : `Maximal ${coupon.maxUses} Einlösungen`;
+          const result = await postToDiscordChannel(
+            `🎟️ Neuer Coupon erstellt\nCode: **${coupon.code}**\nRabatt: **${coupon.percent} %**\n${uses}\nErstellt von: ${coupon.createdBy}`,
+            COUPON_NOTIFICATION_CHANNEL_ID,
+            false
+          );
+          if (result.method !== "bot") {
+            throw new Error("Discord-Bot ist nicht konfiguriert.");
+          }
+        } catch (error) {
+          notificationSent = false;
+          console.error(`Coupon wurde erstellt, konnte aber nicht in Discord-Kanal ${COUPON_NOTIFICATION_CHANNEL_ID} gemeldet werden:`, error.message);
+        }
+        send(res, 201, JSON.stringify({
+          ok: true,
+          coupon: couponWithUsage(coupon, 0),
+          notificationSent
+        }), "application/json; charset=utf-8");
       } catch (error) {
         console.error("Coupon konnte nicht gespeichert werden:", error.message);
         send(res, 500, JSON.stringify({ ok: false, message: "Coupon konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
@@ -3216,7 +3377,7 @@ function startDiscordWelcomeBot() {
   client.once(Events.ClientReady, readyClient => {
     console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
     registerNewFamilyCommand(readyClient, config.guildId).then(() => {
-      console.log("Discord-Slash-Commands /newfam, /buchung, /kasse, /storno, /livez und /healthz sind registriert.");
+      console.log("Discord-Slash-Commands /newfam, /delfam, /buchung, /kasse, /storno, /livez und /healthz sind registriert.");
     }).catch(error => {
       console.error("Discord-Slash-Commands konnten nicht registriert werden:", error.message);
     });
@@ -3226,6 +3387,7 @@ function startDiscordWelcomeBot() {
   });
   client.on(Events.InteractionCreate, interaction => {
     const isNewFamilyCommand = interaction.isChatInputCommand() && interaction.commandName === "newfam";
+    const isDeleteFamilyCommand = interaction.isChatInputCommand() && interaction.commandName === "delfam";
     const isManualBookingCommand = interaction.isChatInputCommand() && interaction.commandName === "buchung";
     const isCashCommand = interaction.isChatInputCommand() && interaction.commandName === "kasse";
     const isVoidCommand = interaction.isChatInputCommand() && interaction.commandName === "storno";
@@ -3233,6 +3395,8 @@ function startDiscordWelcomeBot() {
     const isHealthCommand = interaction.isChatInputCommand() && interaction.commandName === "healthz";
     const handleInteraction = isNewFamilyCommand
       ? handleNewFamilyInteraction(interaction)
+      : isDeleteFamilyCommand
+        ? handleDeleteFamilyInteraction(interaction)
       : isManualBookingCommand
         ? handleManualBookingInteraction(interaction)
         : isCashCommand
@@ -3243,12 +3407,14 @@ function startDiscordWelcomeBot() {
               ? handleHealthCommandInteraction(interaction)
         : handleGatewayOrderInteraction(interaction);
     handleInteraction.catch(error => {
-      const isSlashCommand = isNewFamilyCommand || isManualBookingCommand || isCashCommand || isVoidCommand || isLivenessCommand || isHealthCommand;
+      const isSlashCommand = isNewFamilyCommand || isDeleteFamilyCommand || isManualBookingCommand || isCashCommand || isVoidCommand || isLivenessCommand || isHealthCommand;
       const context = isSlashCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
       console.error(`${context}:`, error.message);
       if (interaction.isRepliable() && !interaction.replied) {
         const content = isNewFamilyCommand
           ? `Die Familieneinrichtung ist fehlgeschlagen: ${error.message}`
+          : isDeleteFamilyCommand
+            ? `Die Familie konnte nicht vollständig gelöscht werden: ${error.message}`
           : isManualBookingCommand
             ? `Buchung fehlgeschlagen: ${error.message}`
             : isCashCommand
