@@ -94,7 +94,7 @@ const pendingTicketClaims = new Set();
 const EXTENSION_COMMANDS = [
   "coupon", "famrang", "famkasse",
   "ping", "serverinfo", "userinfo", "famtop", "famkassen", "ticketliste", "ticketadd", "ticketremove",
-  "umfrage", "ankuendigung", "clear", "slowmode", "sperren", "entsperren", "couponinfo"
+  "umfrage", "ankuendigung", "clear", "slowmode", "sperren", "entsperren", "couponinfo", "help"
 ];
 let discordGatewayClient = null;
 const ROOT = __dirname;
@@ -3835,7 +3835,86 @@ async function fetchOpenTicketChannel(ctx) {
   return { channel, ticket };
 }
 
+const HELP_SECTIONS = {
+  familien: {
+    title: "👪 Familien (nur Server-Admins)",
+    lines: [
+      "`/newfam name` – Familie mit Kanal und Rolle erstellen",
+      "`/delfam name` – Familie löschen (mit Bestätigung)",
+      "`/listfam` – Alle Familien auflisten",
+      "`/faminfo name` – Details, Mitglieder und Ränge",
+      "`/famadd familie mitglied` / `/famremove familie mitglied` – Mitglied hinzufügen / entfernen",
+      "`/famrename alt neu` – Familie umbenennen",
+      "`/famrang familie mitglied rang` – Boss, Unterboss oder Mitglied setzen",
+      "`/famrolle [seite]` – Familienrollen und Mitgliederzahlen",
+      "`/famuebersicht` – Übersicht aller Familien",
+      "`/famfarbe familie farbe` – Rollenfarbe ändern",
+      "`/famtopic familie thema` – Kanalthema setzen",
+      "`/famaktivitaet familie` – Aktivität einer Familie",
+      "`/famexport [format]` – Familien exportieren",
+      "`/famaudit [suche] [anzahl]` – Familien-Audit durchsuchen",
+      "`/famcheck` – Familien auf Probleme prüfen",
+      "`/fambeitritt familie` – Aufnahme beantragen (alle)",
+      "`/famtop` – Größte Familien (alle)"
+    ]
+  },
+  kasse: {
+    title: "💰 Familienkasse",
+    lines: [
+      "`/famkasse stand familie` – Kontostand (Familienmitglieder)",
+      "`/famkasse einzahlen familie betrag [beschreibung]` – Einzahlen",
+      "`/famkasse auszahlen familie betrag beschreibung` – Auszahlen (Boss, Unterboss, Admins)",
+      "`/famkasse verlauf familie` – Letzte Buchungen",
+      "`/famkassen` – Alle Kassen (nur Admins)"
+    ]
+  },
+  tickets: {
+    title: "🎫 Tickets",
+    lines: [
+      "`/ticketeinrichten panel kategorie ticketarten [archiv]` – Ticketsystem einrichten (Server-Admins)",
+      "`/ticketliste` – Offene Tickets (Ticket-Admins)",
+      "`/ticketadd mitglied` / `/ticketremove mitglied` – im Ticketkanal Mitglied hinzufügen / entfernen (Ticket-Admins)",
+      "Button „Ticket übernehmen“ und „Ticket schließen“ direkt im Ticket"
+    ]
+  },
+  shop: {
+    title: "🛒 Shop & Buchhaltung (Katalog-Admin-Rolle)",
+    lines: [
+      "`/coupon erstellen code rabatt [limit]` – Coupon anlegen (10/20/40 %)",
+      "`/coupon deaktivieren code` / `/coupon aktivieren code` – Coupon sperren / freigeben",
+      "`/coupon liste` – Neueste Coupons",
+      "`/couponinfo code` – Details und Einlösungen",
+      "`/buchung art betrag beschreibung` – Manuelle Buchung",
+      "`/kasse [zeitraum]` – Kassenbericht",
+      "`/storno buchung_id grund` – Buchung stornieren oder korrigieren"
+    ]
+  },
+  werkzeuge: {
+    title: "🧰 Werkzeuge",
+    lines: [
+      "`/ping`, `/serverinfo`, `/userinfo [nutzer]` – Info-Befehle (alle)",
+      "`/umfrage frage option1 option2 [option3–5]` – Umfrage (Team)",
+      "`/ankuendigung kanal text` – Ankündigung senden (Admins)",
+      "`/clear anzahl` – 1–100 Nachrichten löschen (Admins)",
+      "`/slowmode sekunden [kanal]` – Slowmode (Admins)",
+      "`/sperren [kanal]` / `/entsperren [kanal]` – Kanal sperren / freigeben (Admins)",
+      "`/livez`, `/healthz` – Statusprüfung",
+      "`/help [bereich]` – Diese Hilfe"
+    ]
+  }
+};
+
 const UTILITY_COMMANDS = {
+  async help(ctx) {
+    const section = HELP_SECTIONS[String(ctx.options.bereich || "")];
+    if (section) return `**${section.title}**\n${section.lines.join("\n")}`.slice(0, 1990);
+    const overview = Object.entries(HELP_SECTIONS).map(([key, item]) => {
+      const names = [...new Set(item.lines.flatMap(line => [...line.matchAll(/^`\/([a-z]+)/g)].map(match => `/${match[1]}`)))];
+      return `**${item.title}**\n${names.join(" ")}`;
+    });
+    return `**Olymp Bot – Befehlsübersicht**\n\n${overview.join("\n\n")}\n\nDetails und Verwendung: \`/help bereich:<Bereich>\` (Pflichtangaben zuerst, \`[…]\` ist optional).`.slice(0, 1990);
+  },
+
   async ping() {
     const wsPing = discordGatewayClient?.ws?.ping;
     const uptime = Math.floor(process.uptime());
@@ -4190,6 +4269,17 @@ async function registerNewFamilyCommand(client, guildId) {
     return builder;
   };
   const utilityCommands = [
+    utility("help", "Zeigt alle Befehle mit Verwendung.")
+      .addStringOption(option => option
+        .setName("bereich")
+        .setDescription("Nur einen Bereich anzeigen")
+        .addChoices(
+          { name: "Familien", value: "familien" },
+          { name: "Familienkasse", value: "kasse" },
+          { name: "Tickets", value: "tickets" },
+          { name: "Shop & Buchhaltung", value: "shop" },
+          { name: "Werkzeuge", value: "werkzeuge" }
+        )),
     utility("ping", "Zeigt Latenz und Laufzeit des Bots."),
     utility("serverinfo", "Zeigt Informationen zum Server."),
     utility("userinfo", "Zeigt Informationen zu einem Mitglied.")
