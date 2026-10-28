@@ -23,7 +23,8 @@ function createTicketTopic(ticket) {
     ownerId: ticket.ownerId,
     type: ticket.type,
     status: ticket.status,
-    createdAt: ticket.createdAt
+    createdAt: ticket.createdAt,
+    ...(/^\d{17,20}$/.test(ticket.claimedBy || "") ? { claimedBy: ticket.claimedBy } : {})
   };
   return `olymp-ticket:${Buffer.from(JSON.stringify(payload)).toString("base64url")}`;
 }
@@ -39,6 +40,7 @@ function parseTicketTopic(topic) {
       || Number.isNaN(Date.parse(ticket.createdAt))) {
       return null;
     }
+    if (ticket.claimedBy !== undefined && !/^\d{17,20}$/.test(ticket.claimedBy)) delete ticket.claimedBy;
     return ticket;
   } catch {
     return null;

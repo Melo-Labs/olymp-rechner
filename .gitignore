@@ -5,6 +5,8 @@ node_modules/
 /data/accounting-ledger.json
 /data/family-applications.json
 /data/family-audit.json
+/data/family-treasury.json
+/data/audit-log.json
 /data/ticket-config.json
 /data/backups/
 /material-bestellungen.json

@@ -7,7 +7,8 @@
     ['/admin/buyback', 'Ankauf-Produkte'],
     ['/admin/coupons', 'Coupons'],
     ['/admin/orders', 'Bestellverwaltung'],
-    ['/admin/accounting', 'Buchhaltung']
+    ['/admin/accounting', 'Buchhaltung'],
+    ['/admin/audit', 'Audit']
   ];
   const button = document.createElement('button');
   button.type = 'button';

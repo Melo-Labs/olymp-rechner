@@ -22,6 +22,9 @@ const {
 const { CATEGORY_LABELS, createLedger, periodRange, shiftDateKey, summarize } = require("./ledger");
 const { createDataBackup } = require("./data-backups");
 const { writeJsonAtomically } = require("./json-store");
+const { buildAuditFeed, createAuditLog } = require("./audit-log");
+const { createFamilyTreasury } = require("./family-treasury");
+const { FAMILY_RANKS, familyRankRoleName } = require("./family-ranks");
 const {
   calculateCouponPrice,
   couponUsesRemaining,
@@ -87,6 +90,8 @@ const pendingFamilyDeletions = new Map();
 const pendingFamilyMemberChanges = new Map();
 const pendingFamilyListPages = new Map();
 const pendingTicketCreations = new Set();
+const pendingTicketClaims = new Set();
+const EXTENSION_COMMANDS = ["coupon", "famrang", "famkasse"];
 let discordGatewayClient = null;
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
@@ -147,6 +152,10 @@ const SHOP_COUPONS_FILE = resolvePersistentDataFile("SHOP_COUPONS_FILE", "data/s
 const FAMILY_AUDIT_FILE = resolvePersistentDataFile("FAMILY_AUDIT_FILE", "data/family-audit.json");
 const FAMILY_APPLICATIONS_FILE = resolvePersistentDataFile("FAMILY_APPLICATIONS_FILE", "data/family-applications.json");
 const TICKET_CONFIG_FILE = resolvePersistentDataFile("TICKET_CONFIG_FILE", "data/ticket-config.json");
+const FAMILY_TREASURY_FILE = resolvePersistentDataFile("FAMILY_TREASURY_FILE", "data/family-treasury.json");
+const AUDIT_LOG_FILE = resolvePersistentDataFile("AUDIT_LOG_FILE", "data/audit-log.json");
+const familyTreasury = createFamilyTreasury(FAMILY_TREASURY_FILE);
+const auditLog = createAuditLog(AUDIT_LOG_FILE);
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
@@ -176,6 +185,8 @@ const staticFiles = new Map([
   ["/admin/orders.js", "orders-admin.js"],
   ["/admin/accounting", "accounting-admin.html"],
   ["/admin/accounting.js", "accounting-admin.js"],
+  ["/admin/audit", "audit-admin.html"],
+  ["/admin/audit.js", "audit-admin.js"],
   ["/produktions-rechner.html", "produktions-rechner.html"],
   ["/production-utils.js", "production-utils.js"],
   ["/script.js", "script.js"],
@@ -281,7 +292,7 @@ function loginPage(error = "", title = "Produktionsrechner", redirectPath = "/pr
     cancelled: "Die Discord-Anmeldung wurde abgebrochen."
   };
   const message = messages[error] || "";
-  const adminPath = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons"].includes(redirectPath) ? redirectPath : "/admin/catalog";
+  const adminPath = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons", "/admin/audit"].includes(redirectPath) ? redirectPath : "/admin/catalog";
   const authHref = title === "Admin Panel" ? `/auth/discord?next=${encodeURIComponent(adminPath)}` : "/auth/discord";
   return `<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Discord-Anmeldung</title>
@@ -441,7 +452,7 @@ async function beginLogin(req, res, config) {
   if (!configIsReady(config)) {
     const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const requestedDestination = loginUrl.searchParams.get("next");
-    const isAdmin = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons"].includes(requestedDestination);
+    const isAdmin = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons", "/admin/audit"].includes(requestedDestination);
     send(res, 503, loginPage("setup", isAdmin ? "Admin Panel" : "Produktionsrechner", requestedDestination || "/admin/catalog"), "text/html; charset=utf-8");
     return;
   }
@@ -451,7 +462,7 @@ async function beginLogin(req, res, config) {
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const requestedDestination = loginUrl.searchParams.get("next");
-  const redirectPath = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons"].includes(requestedDestination) ? requestedDestination : "";
+  const redirectPath = ["/admin/catalog", "/admin/orders", "/admin/accounting", "/admin/coupons", "/admin/audit"].includes(requestedDestination) ? requestedDestination : "";
   pendingLogins.set(state, { verifier, redirectPath, expiresAt: Date.now() + 10 * 60 * 1000 });
   appendCookie(res, makeCookie("olymp_oauth_state", state, 600));
   const query = new URLSearchParams({
@@ -763,6 +774,8 @@ function runDailyDataBackup() {
         { name: "family-audit", path: FAMILY_AUDIT_FILE },
         { name: "family-applications", path: FAMILY_APPLICATIONS_FILE },
         { name: "ticket-config", path: TICKET_CONFIG_FILE },
+        { name: "family-treasury", path: FAMILY_TREASURY_FILE },
+        { name: "audit-log", path: AUDIT_LOG_FILE },
         { name: "catalog-audit-pending", path: CATALOG_AUDIT_PENDING_FILE },
         { name: "accounting-ledger", path: ACCOUNTING_LEDGER_FILE },
         { name: "accounting-reports", path: ACCOUNTING_REPORTS_FILE },
@@ -826,6 +839,106 @@ function couponWithUsage(coupon, uses) {
     uses,
     usesRemaining: couponUsesRemaining(coupon, uses)
   };
+}
+
+function readJsonList(file) {
+  const value = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!Array.isArray(value)) throw new Error("Die Datei enthält keine gültige Liste.");
+  return value;
+}
+
+function recordAudit(entry) {
+  try {
+    auditLog.record(entry);
+  } catch (error) {
+    console.error("Audit-Eintrag konnte nicht gespeichert werden:", error.message);
+  }
+}
+
+function couponStatusError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+async function createShopCoupon(rawDefinition, createdBy, actorId = "") {
+  let definition;
+  try {
+    definition = validateCouponDefinition(rawDefinition);
+  } catch (error) {
+    throw couponStatusError(error.message, 400);
+  }
+  const coupons = readShopCoupons();
+  if (coupons.some(coupon => coupon.code === definition.code)) {
+    throw couponStatusError("Dieser Coupon-Code ist bereits vergeben.", 409);
+  }
+  if (coupons.length >= 1000) {
+    throw couponStatusError("Es können höchstens 1.000 Coupons gespeichert werden.", 409);
+  }
+  const coupon = {
+    id: crypto.randomUUID(),
+    ...definition,
+    active: true,
+    createdAt: new Date().toISOString(),
+    createdBy: String(createdBy || "Admin").slice(0, 80)
+  };
+  writeAccountingJson(SHOP_COUPONS_FILE, [...coupons, coupon]);
+  recordAudit({
+    category: "coupon",
+    action: "Coupon erstellt",
+    subject: coupon.code,
+    actorId,
+    actorName: coupon.createdBy,
+    details: `${coupon.percent} % · ${coupon.maxUses === null ? "unbegrenzt" : `${coupon.maxUses} Einlösungen`}`
+  });
+  let notificationSent = true;
+  try {
+    const uses = coupon.maxUses === null ? "Unbegrenzt viele Einlösungen" : `Maximal ${coupon.maxUses} Einlösungen`;
+    const result = await postToDiscordChannel(
+      `🎟️ Neuer Coupon erstellt\nCode: **${coupon.code}**\nRabatt: **${coupon.percent} %**\n${uses}\nErstellt von: ${coupon.createdBy}`,
+      COUPON_NOTIFICATION_CHANNEL_ID,
+      false
+    );
+    if (result.method !== "bot") {
+      throw new Error("Discord-Bot ist nicht konfiguriert.");
+    }
+  } catch (error) {
+    notificationSent = false;
+    console.error(`Coupon wurde erstellt, konnte aber nicht in Discord-Kanal ${COUPON_NOTIFICATION_CHANNEL_ID} gemeldet werden:`, error.message);
+  }
+  return { coupon: couponWithUsage(coupon, 0), notificationSent };
+}
+
+function setShopCouponActive(match, active, actorName, actorId = "") {
+  const coupons = readShopCoupons();
+  const coupon = coupons.find(item => match.id ? item.id === match.id : item.code === match.code);
+  if (!coupon) throw couponStatusError("Coupon nicht gefunden.", 404);
+  const usageCounts = getCouponUsageCounts(coupons);
+  coupon.active = active;
+  coupon.updatedAt = new Date().toISOString();
+  coupon.updatedBy = String(actorName || "Admin").slice(0, 80);
+  writeAccountingJson(SHOP_COUPONS_FILE, coupons);
+  recordAudit({
+    category: "coupon",
+    action: active ? "Coupon aktiviert" : "Coupon deaktiviert",
+    subject: coupon.code,
+    actorId,
+    actorName: coupon.updatedBy
+  });
+  return couponWithUsage(coupon, usageCounts.get(coupon.code) || 0);
+}
+
+function couponListMessage() {
+  const coupons = readShopCoupons();
+  if (!coupons.length) return "Es sind noch keine Coupons angelegt.";
+  const usageCounts = getCouponUsageCounts(coupons);
+  const lines = coupons.slice().reverse().slice(0, 20).map(coupon => {
+    const uses = usageCounts.get(coupon.code) || 0;
+    const limit = coupon.maxUses ? `${uses}/${coupon.maxUses}` : `${uses}/∞`;
+    return `• **${coupon.code}** · ${coupon.percent} % · ${coupon.active ? "aktiv" : "deaktiviert"} · eingelöst ${limit}`;
+  });
+  const omitted = coupons.length > 20 ? `\n… und ${coupons.length - 20} weitere (siehe Admin-Panel).` : "";
+  return `**Coupons (${coupons.length})**\n${lines.join("\n")}${omitted}`;
 }
 
 function couponRequestError(message) {
@@ -2186,8 +2299,13 @@ function ticketPanelComponents(types) {
   return [new ActionRowBuilder().addComponents(menu)];
 }
 
-function ticketCloseComponents() {
+function ticketCloseComponents(claimedBy = null) {
   return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ticket:claim")
+      .setLabel(claimedBy ? "In Bearbeitung" : "Ticket übernehmen")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(Boolean(claimedBy)),
     new ButtonBuilder()
       .setCustomId("ticket:close")
       .setLabel("Ticket schließen")
@@ -2335,6 +2453,14 @@ async function createTicketChannelUnlocked(guild, userId, selectedType) {
     });
     throw new Error(`Der Ticket-Kanal wurde erstellt, aber die Startnachricht konnte nicht gesendet werden: ${error.message}`);
   }
+  recordAudit({
+    category: "ticket",
+    action: "Ticket erstellt",
+    subject: ticket.name,
+    actorId: owner.id,
+    actorName: owner.user.username,
+    details: `Art: ${type}`
+  });
   return ticket;
 }
 
@@ -2409,7 +2535,7 @@ async function closeTicketChannel(channel, actor, guild) {
   }
   const transcript = await ticketTranscript(channel);
   await auditChannel.send({
-    content: `Transkript des geschlossenen Tickets **${channel.name}** · Art: **${ticket.type}** · Ersteller: <@${ticket.ownerId}> (${ticket.ownerId}) · geschlossen von <@${actor.id}>`,
+    content: `Transkript des geschlossenen Tickets **${channel.name}** · Art: **${ticket.type}** · Ersteller: <@${ticket.ownerId}> (${ticket.ownerId})${ticket.claimedBy ? ` · Bearbeiter: <@${ticket.claimedBy}>` : ""} · geschlossen von <@${actor.id}>`,
     files: [new AttachmentBuilder(transcript, { name: `transkript-${channel.id}.txt` })],
     allowedMentions: { parse: [] }
   });
@@ -2427,7 +2553,56 @@ async function closeTicketChannel(channel, actor, guild) {
   if (!channel.name.startsWith("archiviert-")) {
     await channel.setName(`archiviert-${channel.name}`.slice(0, 100));
   }
+  recordAudit({
+    category: "ticket",
+    action: "Ticket geschlossen",
+    subject: channel.name,
+    actorId: actor.id,
+    details: `Art: ${ticket.type} · Ersteller: ${ticket.ownerId}${ticket.claimedBy ? ` · Bearbeiter: ${ticket.claimedBy}` : ""}`
+  });
   return `Ticket archiviert. Das Transkript wurde in <#${CATALOG_AUDIT_CHANNEL_ID}> veröffentlicht.`;
+}
+
+async function claimTicketChannel(channel, actor, guild) {
+  const ticket = parseTicketTopic(channel.topic);
+  if (!ticket || ticket.status !== "open") throw new Error("Dieser Kanal ist kein offenes Ticket.");
+  const config = readTicketConfiguration();
+  if (!config) throw new Error("Die Ticketkonfiguration wurde nicht gefunden.");
+  const member = await guild.members.fetch(actor.id);
+  const canManage = member.permissions.has(PermissionFlagsBits.Administrator)
+    || member.roles.cache.has(config.adminRoleId);
+  if (!canManage) throw new Error("Nur Katalog-Admins dürfen Tickets übernehmen.");
+  if (ticket.claimedBy) throw new Error(`Dieses Ticket wird bereits von <@${ticket.claimedBy}> bearbeitet.`);
+  if (pendingTicketClaims.has(channel.id)) throw new Error("Dieses Ticket wird gerade übernommen.");
+  pendingTicketClaims.add(channel.id);
+  try {
+    await channel.setTopic(createTicketTopic({ ...ticket, claimedBy: member.id }), `Ticket von ${member.id} übernommen`);
+  } finally {
+    pendingTicketClaims.delete(channel.id);
+  }
+  await channel.send({
+    content: `🛠️ <@${member.id}> hat dieses Ticket übernommen und kümmert sich darum.`,
+    allowedMentions: { users: [ticket.ownerId] }
+  }).catch(error => console.error("Ticket-Übernahme konnte nicht im Kanal gemeldet werden:", error.message));
+  recordAudit({
+    category: "ticket",
+    action: "Ticket übernommen",
+    subject: channel.name,
+    actorId: member.id,
+    actorName: member.user.username,
+    details: `Art: ${ticket.type} · Ersteller: ${ticket.ownerId}`
+  });
+  return member.id;
+}
+
+async function handleTicketClaimInteraction(interaction) {
+  await interaction.deferUpdate();
+  try {
+    const claimerId = await claimTicketChannel(interaction.channel, interaction.member, interaction.guild);
+    await interaction.editReply({ components: ticketCloseComponents(claimerId) });
+  } catch (error) {
+    await interaction.followUp({ content: error.message, ephemeral: true, allowedMentions: { parse: [] } });
+  }
 }
 
 async function handleTicketSetupInteraction(interaction) {
@@ -2586,6 +2761,7 @@ async function renameFamily(guild, oldName, newName, actorId) {
     throw new Error(`Dem Bot fehlen die Serverberechtigungen: ${missingPermissions.join(" und ")}.`);
   }
 
+  const oldRoleName = role.name;
   await role.setName(newName, `Familie durch Admin ${actorId} umbenannt`);
   try {
     await channel.setName(newSlug, `Familie durch Admin ${actorId} umbenannt`);
@@ -2596,6 +2772,12 @@ async function renameFamily(guild, oldName, newName, actorId) {
       throw new Error(`Die Rolle wurde umbenannt, aber der Kanal nicht; auch das Zurücksetzen der Rolle schlug fehl: ${rollbackError.message}`);
     }
     throw new Error(`Der Kanal konnte nicht umbenannt werden; die Rolle wurde zurückgesetzt: ${error.message}`);
+  }
+  await renameFamilyRankRoles(guild, oldRoleName, newName);
+  try {
+    familyTreasury.rename(oldSlug, newSlug, newName);
+  } catch (error) {
+    console.error("Familienkasse konnte nicht umbenannt werden:", error.message);
   }
   await logFamilyAudit("Familie umbenannt", newName, actorId, `Vorher: ${oldName} · Kanal: <#${channel.id}> · Rolle: <@&${role.id}>`);
   return `Familie **${oldName}** wurde in **${newName}** umbenannt.`;
@@ -2625,7 +2807,8 @@ async function getFamilyInfo(guild, familyName) {
     ? (members.length ? members.slice(0, 20).join(", ") : "Keine Mitglieder")
     : "Die Familienrolle wurde nicht gefunden.";
   const omittedMembers = members.length > 20 ? `\nWeitere Mitglieder: ${members.length - 20}` : "";
-  return `**Familie ${name}**\nKanal: <#${entry.channel.id}>\nRolle: ${entry.role ? `<@&${entry.role.id}>` : "Nicht gefunden"}\nMitglieder: ${entry.role?.members.size ?? 0}\nMitgliederliste: ${memberList}${omittedMembers}`;
+  const ranks = entry.role ? `\n${familyRankSummary(guild, entry.role)}` : "";
+  return `**Familie ${name}**\nKanal: <#${entry.channel.id}>\nRolle: ${entry.role ? `<@&${entry.role.id}>` : "Nicht gefunden"}\nMitglieder: ${entry.role?.members.size ?? 0}\nMitgliederliste: ${memberList}${omittedMembers}${ranks}`;
 }
 
 async function prepareFamilyMemberChange(guild, familyName, userId, add, adminId, adminName) {
@@ -2727,6 +2910,7 @@ async function completeFamilyMemberChange(token, action, guildId, adminId, guild
       await member.roles.add(family.role, `Mitglied durch /famadd zur Familie ${confirmation.familyName} hinzugefügt`);
     } else {
       await member.roles.remove(family.role, `Mitglied durch /famremove aus der Familie ${confirmation.familyName} entfernt`);
+      await removeFamilyRankRoles(guild, family.role.name, member);
     }
     const actionLabel = confirmation.add ? "Mitglied hinzugefügt" : "Mitglied entfernt";
     await logFamilyAudit(actionLabel, confirmation.familyName, adminId, `Mitglied: ${member.user.tag} (${member.id})`);
@@ -2973,6 +3157,7 @@ async function deleteFamily(guild, confirmation) {
   }
   let roleDeleted = false;
   if (role) {
+    await deleteFamilyRankRoles(guild, role.name);
     try {
       await role.delete(`Familie ${confirmation.familyName} durch /delfam gelöscht`);
       roleDeleted = true;
@@ -2991,7 +3176,14 @@ async function completeFamilyDeletion(token, action, guildId, userId, guild) {
   try {
     if (action === "cancel") return "Familienlöschung abgebrochen. Es wurde nichts gelöscht.";
     const result = await deleteFamily(guild, confirmation);
-    await logFamilyAudit("Familie gelöscht", confirmation.familyName, userId, `Kanal-ID: ${confirmation.channelId || "nicht vorhanden"} · Rollen-ID: ${confirmation.roleId || "nicht vorhanden"}`);
+    let treasuryNote = "";
+    try {
+      const removed = familyTreasury.remove(familySlug(confirmation.familyName));
+      if (removed) treasuryNote = ` · Familienkasse gelöscht (Restsaldo ${formatMoney(removed.balance)})`;
+    } catch (error) {
+      console.error("Familienkasse konnte nicht gelöscht werden:", error.message);
+    }
+    await logFamilyAudit("Familie gelöscht", confirmation.familyName, userId, `Kanal-ID: ${confirmation.channelId || "nicht vorhanden"} · Rollen-ID: ${confirmation.roleId || "nicht vorhanden"}${treasuryNote}`);
     return familyDeletedMessage(confirmation.familyName, result);
   } finally {
     pendingFamilyDeletions.delete(token);
@@ -3399,7 +3591,373 @@ async function handleHttpVoid(payload) {
   );
 }
 
+async function findFamilyEntry(guild, familyName, loadMembers = false) {
+  if (!familySlug(familyName)) throw new Error("Bitte gib einen gültigen Familiennamen ein.");
+  const channelName = familySlug(familyName);
+  const matches = (await familyEntries(guild, loadMembers)).filter(entry =>
+    entry.channel.name === channelName
+    || entry.role?.name.toLowerCase() === familyName.toLowerCase()
+  );
+  if (matches.length > 1) {
+    throw new Error("Es wurden mehrere passende Familien gefunden. Bitte bereinige die doppelten Ressourcen zuerst.");
+  }
+  if (!matches.length) throw new Error(`Die Familie „${familyName}“ wurde nicht gefunden.`);
+  if (!matches[0].role) throw new Error(`Für Familie „${familyName}“ wurde keine passende Rolle gefunden.`);
+  return matches[0];
+}
+
+function findFamilyRankRole(guild, familyRoleName, rank) {
+  try {
+    const wanted = familyRankRoleName(familyRoleName, rank).toLowerCase();
+    return guild.roles.cache.find(role => role.name.toLowerCase() === wanted) || null;
+  } catch {
+    return null;
+  }
+}
+
+function familyRankSummary(guild, familyRole) {
+  return Object.entries(FAMILY_RANKS).map(([rank, label]) => {
+    const role = findFamilyRankRole(guild, familyRole.name, rank);
+    const names = role
+      ? [...role.members.values()].map(member => member.displayName.replace(/[`*_~|]/g, "")).sort((a, b) => a.localeCompare(b, "de"))
+      : [];
+    return `${label}: ${names.length ? names.slice(0, 10).join(", ") : "–"}`;
+  }).join("\n");
+}
+
+async function applyFamilyRankOverwrite(channel, role, rank) {
+  await channel.permissionOverwrites.edit(role, {
+    ViewChannel: true,
+    SendMessages: true,
+    ReadMessageHistory: true,
+    ManageMessages: true,
+    ...(rank === "boss" ? { ManageThreads: true } : {})
+  }, { reason: `Rangrechte für ${role.name}` });
+}
+
+async function setFamilyRank(guild, familyName, memberId, rank, actorId) {
+  if (!/^\d{17,20}$/.test(memberId)) throw new Error("Bitte gib ein gültiges Discord-Mitglied an.");
+  if (rank !== "mitglied" && !Object.hasOwn(FAMILY_RANKS, rank)) throw new Error("Ungültiger Familienrang.");
+  const entry = await findFamilyEntry(guild, familyName);
+  const name = entry.role.name;
+  if (rank !== "mitglied") familyRankRoleName(name, rank);
+  const botMember = await guild.members.fetchMe();
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)
+    || !botMember.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    throw new Error("Dem Bot fehlen „Rollen verwalten“ oder „Kanäle verwalten“.");
+  }
+  const member = await guild.members.fetch(memberId);
+  if (!member.roles.cache.has(entry.role.id)) {
+    throw new Error(`${member.user.tag} ist kein Mitglied der Familie „${name}“. Füge die Person zuerst mit /famadd hinzu.`);
+  }
+
+  let targetRole = null;
+  if (rank !== "mitglied") {
+    targetRole = findFamilyRankRole(guild, name, rank) || await guild.roles.create({
+      name: familyRankRoleName(name, rank),
+      color: entry.role.color,
+      hoist: true,
+      mentionable: false,
+      reason: `Rangrolle ${FAMILY_RANKS[rank]} für Familie ${name}`
+    });
+    await applyFamilyRankOverwrite(entry.channel, targetRole, rank);
+  }
+  for (const otherRank of Object.keys(FAMILY_RANKS)) {
+    if (otherRank === rank) continue;
+    const otherRole = findFamilyRankRole(guild, name, otherRank);
+    if (otherRole && member.roles.cache.has(otherRole.id)) {
+      await member.roles.remove(otherRole, `Familienrang von ${actorId} geändert`);
+    }
+  }
+  if (targetRole && !member.roles.cache.has(targetRole.id)) {
+    await member.roles.add(targetRole, `Familienrang von ${actorId} geändert`);
+  }
+  const label = rank === "mitglied" ? "Mitglied" : FAMILY_RANKS[rank];
+  await logFamilyAudit("Familienrang geändert", name, actorId, `Mitglied: ${member.user.tag} (${member.id}) · Rang: ${label}`);
+  return `${member.user.tag} hat in der Familie **${name}** jetzt den Rang **${label}**.`;
+}
+
+async function removeFamilyRankRoles(guild, familyRoleName, member) {
+  for (const rank of Object.keys(FAMILY_RANKS)) {
+    const role = findFamilyRankRole(guild, familyRoleName, rank);
+    if (role && member.roles.cache.has(role.id)) {
+      await member.roles.remove(role, "Mitglied hat die Familie verlassen").catch(error => {
+        console.error(`Rangrolle ${role.name} konnte nicht entfernt werden:`, error.message);
+      });
+    }
+  }
+}
+
+async function deleteFamilyRankRoles(guild, familyRoleName) {
+  for (const rank of Object.keys(FAMILY_RANKS)) {
+    const role = findFamilyRankRole(guild, familyRoleName, rank);
+    if (role) {
+      await role.delete(`Familie ${familyRoleName} gelöscht`).catch(error => {
+        console.error(`Rangrolle ${role.name} konnte nicht gelöscht werden:`, error.message);
+      });
+    }
+  }
+}
+
+async function renameFamilyRankRoles(guild, oldRoleName, newName) {
+  for (const rank of Object.keys(FAMILY_RANKS)) {
+    const role = findFamilyRankRole(guild, oldRoleName, rank);
+    if (role) {
+      await role.setName(familyRankRoleName(newName, rank), `Familie in ${newName} umbenannt`).catch(error => {
+        console.error(`Rangrolle ${role.name} konnte nicht umbenannt werden:`, error.message);
+      });
+    }
+  }
+}
+
+function formatMoney(amount) {
+  return `${Number(amount).toLocaleString("de-DE")} $`;
+}
+
+async function runFamilyTreasuryCommand(ctx) {
+  const requestedName = String(ctx.options.familie || "").trim();
+  const entry = await findFamilyEntry(ctx.guild, requestedName);
+  const name = entry.role.name;
+  const key = familySlug(name);
+  const member = await ctx.guild.members.fetch(ctx.userId);
+  const isMember = member.roles.cache.has(entry.role.id);
+  const isLeader = Object.keys(FAMILY_RANKS).some(rank => {
+    const role = findFamilyRankRole(ctx.guild, name, rank);
+    return role && member.roles.cache.has(role.id);
+  });
+  if (!ctx.isAdmin && !isMember) throw new Error(`Du bist kein Mitglied der Familie „${name}“.`);
+
+  if (ctx.sub === "stand") {
+    const account = familyTreasury.getAccount(key);
+    const last = account.transactions[0];
+    return `**Familienkasse ${name}**\nKontostand: **${formatMoney(account.balance)}**${last ? `\nLetzte Buchung: ${last.type === "deposit" ? "+" : "−"}${formatMoney(last.amount)} · ${last.description || "ohne Beschreibung"}` : ""}`;
+  }
+  if (ctx.sub === "verlauf") {
+    const account = familyTreasury.getAccount(key);
+    if (!account.transactions.length) return `Die Familienkasse **${name}** hat noch keine Buchungen.`;
+    const lines = account.transactions.slice(0, 10).map(transaction =>
+      `• ${transaction.type === "deposit" ? "+" : "−"}${formatMoney(transaction.amount)} · ${transaction.description || "ohne Beschreibung"} · ${transaction.actorName || transaction.actorId} · ${new Date(transaction.timestamp).toLocaleString("de-DE")} · Stand ${formatMoney(transaction.balanceAfter)}`
+    );
+    return `**Familienkasse ${name} · letzte ${lines.length} Buchung(en)**\n${lines.join("\n")}`.slice(0, 1900);
+  }
+
+  const deposit = ctx.sub === "einzahlen";
+  if (!deposit && ctx.sub !== "auszahlen") throw new Error("Unbekannter Familienkassen-Befehl.");
+  if (!deposit && !ctx.isAdmin && !isLeader) {
+    throw new Error("Auszahlungen dürfen nur Boss, Unterboss oder Server-Admins vornehmen.");
+  }
+  const amount = Number(ctx.options.betrag);
+  const description = String(ctx.options.beschreibung || "").trim() || (deposit ? "Einzahlung" : "");
+  if (!deposit && !description) throw new Error("Bitte gib für eine Auszahlung eine Beschreibung an.");
+  const actor = { id: ctx.userId, name: ctx.actorName };
+  const result = deposit
+    ? familyTreasury.deposit(key, name, amount, description, actor)
+    : familyTreasury.withdraw(key, name, amount, description, actor);
+  recordAudit({
+    category: "familienkasse",
+    action: deposit ? "Einzahlung" : "Auszahlung",
+    subject: name,
+    actorId: ctx.userId,
+    actorName: ctx.actorName,
+    details: `${formatMoney(amount)} · ${description} · neuer Stand ${formatMoney(result.balance)}`
+  });
+  await entry.channel.send({
+    content: `💰 ${deposit ? "Einzahlung" : "Auszahlung"}: **${formatMoney(amount)}** von <@${ctx.userId}> (${description}). Neuer Kassenstand: **${formatMoney(result.balance)}**.`,
+    allowedMentions: { parse: [] }
+  }).catch(error => console.error("Familienkassen-Meldung konnte nicht im Familienkanal gesendet werden:", error.message));
+  return `${deposit ? "Eingezahlt" : "Ausgezahlt"}: **${formatMoney(amount)}**. Neuer Stand der Familienkasse **${name}**: **${formatMoney(result.balance)}**.`;
+}
+
+async function runCouponCommand(ctx) {
+  if (!ctx.isAdmin && !memberCanManageOrders(ctx.guild.id, ctx.roleIds, discordConfig())) {
+    throw new Error("Nur Mitglieder mit der Katalog-Admin-Rolle dürfen Coupons verwalten.");
+  }
+  if (ctx.sub === "liste") return couponListMessage();
+  if (ctx.sub === "erstellen") {
+    const { coupon, notificationSent } = await createShopCoupon({
+      code: ctx.options.code,
+      percent: ctx.options.rabatt,
+      maxUses: ctx.options.limit ?? null
+    }, ctx.actorName, ctx.userId);
+    const limit = coupon.maxUses === null ? "unbegrenzt einlösbar" : `${coupon.maxUses} Einlösungen`;
+    return `Coupon **${coupon.code}** (${coupon.percent} %, ${limit}) wurde erstellt.${notificationSent ? "" : ` Die Meldung in <#${COUPON_NOTIFICATION_CHANNEL_ID}> konnte nicht gesendet werden.`}`;
+  }
+  if (ctx.sub === "aktivieren" || ctx.sub === "deaktivieren") {
+    const active = ctx.sub === "aktivieren";
+    const code = normalizeCouponCode(ctx.options.code);
+    const coupon = setShopCouponActive({ code }, active, ctx.actorName, ctx.userId);
+    return `Coupon **${coupon.code}** wurde ${active ? "aktiviert" : "deaktiviert"}.`;
+  }
+  throw new Error("Unbekannter Coupon-Befehl.");
+}
+
+async function runExtensionCommand(ctx) {
+  if (ctx.name === "coupon") return runCouponCommand(ctx);
+  if (ctx.name === "famkasse") return runFamilyTreasuryCommand(ctx);
+  if (ctx.name === "famrang") {
+    if (!ctx.isAdmin) throw new Error("Nur Server-Admins dürfen Familienränge vergeben.");
+    return setFamilyRank(
+      ctx.guild,
+      String(ctx.options.familie || "").trim(),
+      String(ctx.options.mitglied || ""),
+      String(ctx.options.rang || ""),
+      ctx.userId
+    );
+  }
+  throw new Error("Unbekannter Befehl.");
+}
+
+async function handleGatewayExtensionCommand(interaction) {
+  const config = discordConfig();
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId) {
+    await interaction.reply({
+      content: "Dieser Befehl kann nur auf dem konfigurierten Discord-Server verwendet werden.",
+      ephemeral: true
+    });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const sub = interaction.options.getSubcommand(false);
+    const list = sub ? interaction.options.data[0]?.options || [] : interaction.options.data;
+    const content = await runExtensionCommand({
+      name: interaction.commandName,
+      sub,
+      options: Object.fromEntries(list.map(option => [option.name, option.value])),
+      guild: interaction.guild,
+      userId: interaction.user.id,
+      actorName: actorNameFromMember(interaction.member),
+      roleIds: interaction.member?.roles?.cache ? [...interaction.member.roles.cache.keys()] : [],
+      isAdmin: Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.Administrator))
+    });
+    await interaction.editReply({ content, allowedMentions: { parse: [] } });
+  } catch (error) {
+    console.error(`Discord-Slash-Command /${interaction.commandName} fehlgeschlagen:`, error.message);
+    await interaction.editReply({
+      content: `/${interaction.commandName} fehlgeschlagen: ${error.message}`,
+      allowedMentions: { parse: [] }
+    });
+  }
+}
+
+async function handleHttpExtensionCommand(payload, config) {
+  if (payload.guild_id !== config.guildId) {
+    throw new Error("Dieser Befehl kann nur auf dem konfigurierten Discord-Server verwendet werden.");
+  }
+  if (!discordGatewayClient?.isReady()) throw new Error("Der Bot ist noch nicht verbunden. Bitte in Kürze erneut versuchen.");
+  const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+  const first = payload.data?.options?.[0];
+  const sub = first?.type === 1 ? first.name : null;
+  const list = sub ? first.options || [] : payload.data?.options || [];
+  return runExtensionCommand({
+    name: payload.data.name,
+    sub,
+    options: Object.fromEntries(list.map(option => [option.name, option.value])),
+    guild,
+    userId: payload.member.user.id,
+    actorName: actorNameFromMember(payload.member),
+    roleIds: Array.isArray(payload.member?.roles) ? payload.member.roles : [],
+    isAdmin: (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n
+  });
+}
+
 async function registerNewFamilyCommand(client, guildId) {
+  const couponCommand = new SlashCommandBuilder()
+    .setName("coupon")
+    .setDescription("Verwaltet Shop-Coupons.")
+    .setDMPermission(false)
+    .addSubcommand(subcommand => subcommand
+      .setName("erstellen")
+      .setDescription("Erstellt einen neuen Coupon-Code.")
+      .addStringOption(option => option
+        .setName("code")
+        .setDescription("Coupon-Code (3–32 Zeichen, Buchstaben, Zahlen, Bindestriche)")
+        .setRequired(true)
+        .setMinLength(3)
+        .setMaxLength(32))
+      .addIntegerOption(option => option
+        .setName("rabatt")
+        .setDescription("Rabatt in Prozent")
+        .setRequired(true)
+        .addChoices(
+          { name: "10 %", value: 10 },
+          { name: "20 %", value: 20 },
+          { name: "40 %", value: 40 }
+        ))
+      .addIntegerOption(option => option
+        .setName("limit")
+        .setDescription("Maximale Einlösungen (leer = unbegrenzt)")
+        .setMinValue(1)
+        .setMaxValue(1_000_000)))
+    .addSubcommand(subcommand => subcommand
+      .setName("deaktivieren")
+      .setDescription("Deaktiviert einen Coupon-Code.")
+      .addStringOption(option => option
+        .setName("code")
+        .setDescription("Coupon-Code")
+        .setRequired(true)
+        .setMaxLength(32)))
+    .addSubcommand(subcommand => subcommand
+      .setName("aktivieren")
+      .setDescription("Aktiviert einen Coupon-Code wieder.")
+      .addStringOption(option => option
+        .setName("code")
+        .setDescription("Coupon-Code")
+        .setRequired(true)
+        .setMaxLength(32)))
+    .addSubcommand(subcommand => subcommand
+      .setName("liste")
+      .setDescription("Zeigt die neuesten Coupons mit Status und Einlösungen."))
+    .toJSON();
+  const familyRankCommand = new SlashCommandBuilder()
+    .setName("famrang")
+    .setDescription("Setzt den Rang eines Familienmitglieds (Boss, Unterboss, Mitglied).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("familie")
+      .setDescription("Name der Familie")
+      .setRequired(true)
+      .setMaxLength(100))
+    .addUserOption(option => option
+      .setName("mitglied")
+      .setDescription("Familienmitglied")
+      .setRequired(true))
+    .addStringOption(option => option
+      .setName("rang")
+      .setDescription("Neuer Rang")
+      .setRequired(true)
+      .addChoices(
+        { name: "Boss", value: "boss" },
+        { name: "Unterboss", value: "unterboss" },
+        { name: "Mitglied", value: "mitglied" }
+      ))
+    .toJSON();
+  const familyTreasuryCommand = new SlashCommandBuilder()
+    .setName("famkasse")
+    .setDescription("Verwaltet die Kasse einer Familie.")
+    .setDMPermission(false)
+    .addSubcommand(subcommand => subcommand
+      .setName("stand")
+      .setDescription("Zeigt den Kontostand der Familienkasse.")
+      .addStringOption(option => option.setName("familie").setDescription("Name der Familie").setRequired(true).setMaxLength(100)))
+    .addSubcommand(subcommand => subcommand
+      .setName("einzahlen")
+      .setDescription("Zahlt Geld in die Familienkasse ein.")
+      .addStringOption(option => option.setName("familie").setDescription("Name der Familie").setRequired(true).setMaxLength(100))
+      .addIntegerOption(option => option.setName("betrag").setDescription("Betrag in Dollar").setRequired(true).setMinValue(1).setMaxValue(1_000_000_000))
+      .addStringOption(option => option.setName("beschreibung").setDescription("Wofür ist die Einzahlung?").setMaxLength(100)))
+    .addSubcommand(subcommand => subcommand
+      .setName("auszahlen")
+      .setDescription("Zahlt Geld aus der Familienkasse aus (Boss, Unterboss, Admins).")
+      .addStringOption(option => option.setName("familie").setDescription("Name der Familie").setRequired(true).setMaxLength(100))
+      .addIntegerOption(option => option.setName("betrag").setDescription("Betrag in Dollar").setRequired(true).setMinValue(1).setMaxValue(1_000_000_000))
+      .addStringOption(option => option.setName("beschreibung").setDescription("Wofür ist die Auszahlung?").setRequired(true).setMaxLength(100)))
+    .addSubcommand(subcommand => subcommand
+      .setName("verlauf")
+      .setDescription("Zeigt die letzten Buchungen der Familienkasse.")
+      .addStringOption(option => option.setName("familie").setDescription("Name der Familie").setRequired(true).setMaxLength(100)))
+    .toJSON();
   const familyCommand = new SlashCommandBuilder()
     .setName("newfam")
     .setDescription("Erstellt einen privaten Familienkanal mit passender Rolle.")
@@ -3720,6 +4278,9 @@ async function registerNewFamilyCommand(client, guildId) {
     familyExportCommand,
     familyAuditCommand,
     ticketSetupCommand,
+    couponCommand,
+    familyRankCommand,
+    familyTreasuryCommand,
     manualBookingCommand,
     cashCommand,
     voidCommand,
@@ -3912,6 +4473,23 @@ async function handleDiscordInteraction(req, res) {
         return;
       }
 
+      if (payload.data.custom_id === "ticket:claim") {
+        try {
+          if (payload.guild_id !== config.guildId || !discordGatewayClient?.isReady()) {
+            throw new Error("Dieses Ticket gehört nicht zum konfigurierten Server.");
+          }
+          const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+          const channel = await guild.channels.fetch(payload.channel_id);
+          const claimerId = await claimTicketChannel(channel, payload.member.user, guild);
+          await editOriginalInteraction(payload, {
+            components: ticketCloseComponents(claimerId).map(row => row.toJSON())
+          });
+        } catch (error) {
+          await followupInteraction(payload, error.message);
+        }
+        return;
+      }
+
       if (payload.data.custom_id === "ticket:close") {
         try {
           if (payload.guild_id !== config.guildId || !discordGatewayClient?.isReady()) {
@@ -4024,6 +4602,19 @@ async function handleDiscordInteraction(req, res) {
         payload,
         typeof result === "string" ? { content: result, allowed_mentions: { parse: [] } } : result
       ))
+      .catch(error => console.error(`Discord-Antwort auf /${payload.data.name} fehlgeschlagen:`, error.message));
+    return;
+  }
+
+  if (payload.type === 2 && EXTENSION_COMMANDS.includes(payload.data?.name)) {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void Promise.resolve()
+      .then(() => handleHttpExtensionCommand(payload, config))
+      .catch(error => {
+        console.error(`Discord-Slash-Command /${payload.data.name} fehlgeschlagen:`, error.message);
+        return `/${payload.data.name} fehlgeschlagen: ${error.message}`;
+      })
+      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
       .catch(error => console.error(`Discord-Antwort auf /${payload.data.name} fehlgeschlagen:`, error.message));
     return;
   }
@@ -4673,54 +5264,17 @@ async function handleRequest(req, res) {
       return;
     }
     if (req.method === "POST") {
-      let definition;
       try {
-        definition = validateCouponDefinition(payload);
+        const adminName = String(adminSession.user?.global_name || adminSession.user?.username || "Web-Admin");
+        const created = await createShopCoupon(payload, adminName, String(adminSession.user?.id || ""));
+        send(res, 201, JSON.stringify({ ok: true, ...created }), "application/json; charset=utf-8");
       } catch (error) {
-        send(res, 400, JSON.stringify({ ok: false, message: error.message }), "application/json; charset=utf-8");
-        return;
-      }
-      try {
-        const coupons = readShopCoupons();
-        if (coupons.some(coupon => coupon.code === definition.code)) {
-          send(res, 409, JSON.stringify({ ok: false, message: "Dieser Coupon-Code ist bereits vergeben." }), "application/json; charset=utf-8");
-          return;
-        }
-        if (coupons.length >= 1000) {
-          send(res, 409, JSON.stringify({ ok: false, message: "Es können höchstens 1.000 Coupons gespeichert werden." }), "application/json; charset=utf-8");
-          return;
-        }
-        const coupon = {
-          id: crypto.randomUUID(),
-          ...definition,
-          active: true,
-          createdAt: new Date().toISOString(),
-          createdBy: String(adminSession.user?.global_name || adminSession.user?.username || "Web-Admin").slice(0, 80)
-        };
-        writeAccountingJson(SHOP_COUPONS_FILE, [...coupons, coupon]);
-        let notificationSent = true;
-        try {
-          const uses = coupon.maxUses === null ? "Unbegrenzt viele Einlösungen" : `Maximal ${coupon.maxUses} Einlösungen`;
-          const result = await postToDiscordChannel(
-            `🎟️ Neuer Coupon erstellt\nCode: **${coupon.code}**\nRabatt: **${coupon.percent} %**\n${uses}\nErstellt von: ${coupon.createdBy}`,
-            COUPON_NOTIFICATION_CHANNEL_ID,
-            false
-          );
-          if (result.method !== "bot") {
-            throw new Error("Discord-Bot ist nicht konfiguriert.");
-          }
-        } catch (error) {
-          notificationSent = false;
-          console.error(`Coupon wurde erstellt, konnte aber nicht in Discord-Kanal ${COUPON_NOTIFICATION_CHANNEL_ID} gemeldet werden:`, error.message);
-        }
-        send(res, 201, JSON.stringify({
-          ok: true,
-          coupon: couponWithUsage(coupon, 0),
-          notificationSent
+        const status = error.statusCode || 500;
+        if (status >= 500) console.error("Coupon konnte nicht gespeichert werden:", error.message);
+        send(res, status, JSON.stringify({
+          ok: false,
+          message: status < 500 ? error.message : "Coupon konnte nicht gespeichert werden."
         }), "application/json; charset=utf-8");
-      } catch (error) {
-        console.error("Coupon konnte nicht gespeichert werden:", error.message);
-        send(res, 500, JSON.stringify({ ok: false, message: "Coupon konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
       }
       return;
     }
@@ -4730,24 +5284,35 @@ async function handleRequest(req, res) {
       return;
     }
     try {
-      const coupons = readShopCoupons();
-      const coupon = coupons.find(item => item.id === couponPath[1]);
-      if (!coupon) {
-        send(res, 404, JSON.stringify({ ok: false, message: "Coupon nicht gefunden." }), "application/json; charset=utf-8");
-        return;
-      }
-      const usageCounts = getCouponUsageCounts(coupons);
-      coupon.active = payload.active;
-      coupon.updatedAt = new Date().toISOString();
-      coupon.updatedBy = String(adminSession.user?.global_name || adminSession.user?.username || "Web-Admin").slice(0, 80);
-      writeAccountingJson(SHOP_COUPONS_FILE, coupons);
-      send(res, 200, JSON.stringify({
-        ok: true,
-        coupon: couponWithUsage(coupon, usageCounts.get(coupon.code) || 0)
-      }), "application/json; charset=utf-8");
+      const adminName = String(adminSession.user?.global_name || adminSession.user?.username || "Web-Admin");
+      const coupon = setShopCouponActive({ id: couponPath[1] }, payload.active, adminName, String(adminSession.user?.id || ""));
+      send(res, 200, JSON.stringify({ ok: true, coupon }), "application/json; charset=utf-8");
     } catch (error) {
-      console.error("Coupon-Status konnte nicht gespeichert werden:", error.message);
-      send(res, 500, JSON.stringify({ ok: false, message: "Coupon-Status konnte nicht gespeichert werden." }), "application/json; charset=utf-8");
+      const status = error.statusCode || 500;
+      if (status >= 500) console.error("Coupon-Status konnte nicht gespeichert werden:", error.message);
+      send(res, status, JSON.stringify({
+        ok: false,
+        message: status < 500 ? error.message : "Coupon-Status konnte nicht gespeichert werden."
+      }), "application/json; charset=utf-8");
+    }
+    return;
+  }
+  if (req.method === "GET" && pathname === "/api/admin/audit") {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/audit");
+    if (!adminSession) return;
+    try {
+      const entries = buildAuditFeed({
+        audit: auditLog.read(),
+        family: readJsonList(FAMILY_AUDIT_FILE),
+        ledger: accountingLedger.read(),
+        category: url.searchParams.get("category") || "",
+        query: url.searchParams.get("q") || "",
+        limit: Number(url.searchParams.get("limit") || 100)
+      });
+      send(res, 200, JSON.stringify({ ok: true, entries }), "application/json; charset=utf-8");
+    } catch (error) {
+      console.error("Audit-Dashboard konnte nicht geladen werden:", error.message);
+      send(res, 500, JSON.stringify({ ok: false, message: "Das Audit konnte nicht geladen werden." }), "application/json; charset=utf-8");
     }
     return;
   }
@@ -5147,6 +5712,12 @@ async function handleRequest(req, res) {
     serveStatic(req, res, pathname);
     return;
   }
+  if (pathname === "/admin/audit" || pathname === "/admin/audit.js") {
+    const adminSession = await requireCatalogAdmin(req, res, config, "/admin/audit");
+    if (!adminSession) return;
+    serveStatic(req, res, pathname);
+    return;
+  }
   if (pathname === "/admin/coupons" || pathname === "/admin/coupons.js") {
     const adminSession = await requireCatalogAdmin(req, res, config, "/admin/coupons");
     if (!adminSession) return;
@@ -5233,6 +5804,8 @@ function startDiscordWelcomeBot() {
     const isTicketSetupCommand = interaction.isChatInputCommand() && interaction.commandName === "ticketeinrichten";
     const isTicketSelect = interaction.isStringSelectMenu() && interaction.customId === "ticket:types";
     const isTicketCloseButton = interaction.isButton() && interaction.customId === "ticket:close";
+    const isTicketClaimButton = interaction.isButton() && interaction.customId === "ticket:claim";
+    const isExtensionCommand = interaction.isChatInputCommand() && EXTENSION_COMMANDS.includes(interaction.commandName);
     const isManualBookingCommand = interaction.isChatInputCommand() && interaction.commandName === "buchung";
     const isCashCommand = interaction.isChatInputCommand() && interaction.commandName === "kasse";
     const isVoidCommand = interaction.isChatInputCommand() && interaction.commandName === "storno";
@@ -5252,6 +5825,10 @@ function startDiscordWelcomeBot() {
         ? handleTicketSelectInteraction(interaction)
       : isTicketCloseButton
         ? handleTicketCloseInteraction(interaction)
+      : isTicketClaimButton
+        ? handleTicketClaimInteraction(interaction)
+      : isExtensionCommand
+        ? handleGatewayExtensionCommand(interaction)
       : isFamilyManagementCommand
         ? handleFamilyManagementInteraction(interaction)
       : isManualBookingCommand
@@ -5265,7 +5842,7 @@ function startDiscordWelcomeBot() {
         : handleGatewayOrderInteraction(interaction);
     handleInteraction.catch(error => {
       const isSlashCommand = isNewFamilyCommand || isDeleteFamilyCommand || isFamilyManagementCommand
-        || isFamilyApplicationCommand || isTicketSetupCommand || isManualBookingCommand || isCashCommand
+        || isFamilyApplicationCommand || isTicketSetupCommand || isExtensionCommand || isManualBookingCommand || isCashCommand
         || isVoidCommand || isLivenessCommand || isHealthCommand;
       const context = isSlashCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
       console.error(`${context}:`, error.message);
