@@ -14,12 +14,18 @@ test("normalizes coupon codes and restricts supported discounts", () => {
   assert.deepEqual(validateCouponDefinition({ code: "  olymp-10 ", percent: "10" }), {
     code: "OLYMP-10",
     percent: 10,
-    maxUses: null
+    maxUses: null,
+    minimumOrderValue: null,
+    validFrom: null,
+    validUntil: null
   });
   assert.deepEqual(validateCouponDefinition({ code: "LIMIT5", percent: 20, maxUses: 5 }), {
     code: "LIMIT5",
     percent: 20,
-    maxUses: 5
+    maxUses: 5,
+    minimumOrderValue: null,
+    validFrom: null,
+    validUntil: null
   });
   assert.throws(() => validateCouponDefinition(null), /Coupon-Code/);
   assert.throws(() => validateCouponDefinition([]), /Coupon-Code/);

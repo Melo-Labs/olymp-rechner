@@ -25,7 +25,18 @@ function validateCouponDefinition(value) {
   if (maxUses !== null && (!Number.isSafeInteger(maxUses) || maxUses < 1)) {
     throw new Error("Das Einlösungslimit muss eine positive ganze Zahl sein.");
   }
-  return { code: normalizedCode, percent: discount, maxUses };
+  const minimumOrderValue = value.minimumOrderValue ?? null;
+  if (minimumOrderValue !== null && (!Number.isSafeInteger(minimumOrderValue) || minimumOrderValue < 1)) {
+    throw new Error("Der Mindestbestellwert muss eine positive ganze Zahl sein.");
+  }
+  const validFrom = value.validFrom ?? null;
+  const validUntil = value.validUntil ?? null;
+  if ((validFrom !== null && (typeof validFrom !== "string" || Number.isNaN(Date.parse(validFrom))))
+    || (validUntil !== null && (typeof validUntil !== "string" || Number.isNaN(Date.parse(validUntil))))
+    || (validFrom !== null && validUntil !== null && Date.parse(validFrom) >= Date.parse(validUntil))) {
+    throw new Error("Der Aktionszeitraum ist ungültig.");
+  }
+  return { code: normalizedCode, percent: discount, maxUses, minimumOrderValue, validFrom, validUntil };
 }
 
 function couponUsesRemaining(coupon, usedCount) {
@@ -44,6 +55,13 @@ function findActiveCoupon(coupons, value) {
   if (!Array.isArray(coupons)) throw new Error("Die Coupon-Liste ist ungültig.");
   const code = normalizeCouponCode(value);
   return coupons.find(coupon => coupon && coupon.code === code && coupon.active === true) || null;
+}
+
+function couponAvailabilityError(coupon, subtotal, now = new Date()) {
+  if (coupon.minimumOrderValue !== null && subtotal < coupon.minimumOrderValue) return "Der Mindestbestellwert für diesen Coupon wurde nicht erreicht.";
+  if (coupon.validFrom && now < new Date(coupon.validFrom)) return "Dieser Coupon ist noch nicht aktiv.";
+  if (coupon.validUntil && now >= new Date(coupon.validUntil)) return "Dieser Coupon ist abgelaufen.";
+  return "";
 }
 
 function calculateCouponPrice(subtotal, percent) {
@@ -66,6 +84,7 @@ module.exports = {
   DISCOUNT_PERCENTAGES,
   calculateCouponPrice,
   couponUsesRemaining,
+  couponAvailabilityError,
   findActiveCoupon,
   normalizeCouponCode,
   validateCouponDefinition

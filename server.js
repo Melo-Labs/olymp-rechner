@@ -27,6 +27,7 @@ const { createFamilyTreasury } = require("./family-treasury");
 const { FAMILY_RANKS, familyRankRoleName } = require("./family-ranks");
 const {
   calculateCouponPrice,
+  couponAvailabilityError,
   couponUsesRemaining,
   findActiveCoupon,
   normalizeCouponCode,
@@ -845,6 +846,13 @@ function couponWithUsage(coupon, uses) {
   };
 }
 
+function orderFulfillment(payload) {
+  const requestedFulfillment = String(payload?.requestedFulfillment || "").trim();
+  const customerNote = String(payload?.customerNote || "").trim();
+  if (requestedFulfillment.length > 120 || customerNote.length > 500) throw new Error("Terminwunsch oder Notiz ist zu lang.");
+  return { requestedFulfillment, customerNote };
+}
+
 function readJsonList(file) {
   const value = JSON.parse(fs.readFileSync(file, "utf8"));
   if (!Array.isArray(value)) throw new Error("Die Datei enthält keine gültige Liste.");
@@ -978,6 +986,8 @@ function priceOrderWithCoupon(subtotal, rawCode) {
   if (couponUsesRemaining(coupon, uses) === 0) {
     throw couponRequestError("Dieser Coupon hat sein Einlösungslimit bereits erreicht.");
   }
+  const availabilityError = couponAvailabilityError(coupon, subtotal);
+  if (availabilityError) throw couponRequestError(availabilityError);
   const price = calculateCouponPrice(subtotal, coupon.percent);
   return {
     subtotalPrice: price.subtotal,
@@ -5243,6 +5253,11 @@ async function handleSellOffer(req, res) {
     send(res, 400, JSON.stringify({ ok: false, message: "Bitte mindestens einen Gegenstand auswählen und deine Kontaktdaten korrekt ausfüllen." }), "application/json; charset=utf-8");
     return;
   }
+  let fulfillment;
+  try { fulfillment = orderFulfillment(payload); } catch (error) {
+    send(res, 400, JSON.stringify({ ok: false, message: error.message }), "application/json; charset=utf-8");
+    return;
+  }
 
   let products;
   try {
@@ -5280,6 +5295,7 @@ async function handleSellOffer(req, res) {
     items,
     icName,
     phone,
+    ...fulfillment,
     totalPrice,
     status: "Neu",
     createdAt: new Date().toISOString()
@@ -5316,6 +5332,11 @@ async function handleStankOrder(req, res) {
   }
 
   const subtotalPrice = quantity * 2000;
+  let fulfillment;
+  try { fulfillment = orderFulfillment(payload); } catch (error) {
+    send(res, 400, JSON.stringify({ ok: false, message: error.message }), "application/json; charset=utf-8");
+    return;
+  }
   let pricing;
   try {
     pricing = priceOrderWithCoupon(subtotalPrice, payload.couponCode);
@@ -5329,6 +5350,7 @@ async function handleStankOrder(req, res) {
     quantity,
     icName,
     phone,
+    ...fulfillment,
     subtotalPrice,
     discountAmount,
     couponCode,
@@ -5340,6 +5362,7 @@ async function handleStankOrder(req, res) {
     message: `🌿 Neue STANK-Bestellung\n` +
       `IC-Name: ${icName}\n` +
       `Handynummer / IC: ${phone}\n` +
+      `${fulfillment.requestedFulfillment ? `Terminwunsch: ${fulfillment.requestedFulfillment}\n` : ""}${fulfillment.customerNote ? `Notiz: ${fulfillment.customerNote}\n` : ""}` +
       `STANK-Pflanzen: ${quantity}\n` +
       `${priceBreakdownMessage(pricing)}`
   };
@@ -5449,6 +5472,7 @@ async function handleCustomOrder(req, res) {
     status: "Neu",
     createdAt: new Date().toISOString(),
     message: `🛒 Neue Wunsch-Bestellung\nIC-Name: ${icName}\nHandynummer / IC: ${phone}\n` +
+      `${fulfillment.requestedFulfillment ? `Terminwunsch: ${fulfillment.requestedFulfillment}\n` : ""}${fulfillment.customerNote ? `Notiz: ${fulfillment.customerNote}\n` : ""}` +
       items.map((item, index) => `${index + 1}. ${item.name}${item.type === "custom" ? " (Wunsch)" : ""} — ${item.quantity} × ${item.pricePerItem} $ = ${item.totalPrice} $`).join("\n") +
       `\n${priceBreakdownMessage(pricing)}`
   };
