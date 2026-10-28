@@ -2381,7 +2381,7 @@ async function closeTicketChannel(channel, actor, guild) {
   if (!ticket || ticket.status !== "open") throw new Error("Dieser Kanal ist kein offenes Ticket.");
   const config = readTicketConfiguration();
   if (!config) throw new Error("Die Ticketkonfiguration wurde nicht gefunden.");
-  const member = actor.roles?.cache ? actor : await guild.members.fetch(actor.id);
+  const member = await guild.members.fetch(actor.id);
   const canManage = member.permissions.has(PermissionFlagsBits.Administrator)
     || member.roles.cache.has(config.adminRoleId);
   if (ticket.ownerId !== actor.id && !canManage) {
@@ -3790,13 +3790,11 @@ async function handleDiscordInteraction(req, res) {
         const content = await handleHttpTicketSelect(payload, config);
         await editOriginalInteraction(payload, {
           content,
-          flags: 64,
           allowed_mentions: { parse: [] }
         });
       } catch (error) {
         await editOriginalInteraction(payload, {
           content: error.message,
-          flags: 64,
           allowed_mentions: { parse: [] }
         });
       }
@@ -5202,9 +5200,14 @@ function startDiscordWelcomeBot() {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMembers,
       GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent
+      ...(process.env.DISCORD_MESSAGE_CONTENT_INTENT === "true"
+        ? [GatewayIntentBits.MessageContent]
+        : [])
     ]
   });
+  if (process.env.DISCORD_MESSAGE_CONTENT_INTENT !== "true") {
+    console.warn("Discord Message Content Intent ist deaktiviert; Tickettranskripte enthalten keine Nachrichtentexte. Zum Aktivieren DISCORD_MESSAGE_CONTENT_INTENT=true setzen und den Intent im Developer Portal freischalten.");
+  }
   discordGatewayClient = client;
   client.once(Events.ClientReady, readyClient => {
     console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
