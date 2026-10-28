@@ -6,14 +6,18 @@ const http = require("node:http");
 const path = require("node:path");
 const { verifyKey } = require("discord-interactions");
 const {
+  ActionRowBuilder,
   AttachmentBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
   EmbedBuilder,
   Events,
   GatewayIntentBits,
   PermissionFlagsBits,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  StringSelectMenuBuilder
 } = require("discord.js");
 const { CATEGORY_LABELS, createLedger, periodRange, shiftDateKey, summarize } = require("./ledger");
 const { createDataBackup } = require("./data-backups");
@@ -33,6 +37,12 @@ const {
   parseButtonAction,
   phoneFromEmbed
 } = require("./discord-order-ui");
+const {
+  createTicketTopic,
+  normalizeTicketTypes,
+  parseTicketTopic,
+  ticketChannelSlug
+} = require("./ticket-utils");
 
 function loadEnvFile() {
   const file = path.join(__dirname, ".env");
@@ -73,6 +83,10 @@ const WELCOME_CHANNEL_ID = "1558193685860982880";
 const UNVERIFIED_ROLE_ID = "1558193824386261192";
 const ACCOUNTING_CHANNEL_ID = "1559327859351232603";
 const FAMILY_CATEGORY_NAME = "Familien";
+const pendingFamilyDeletions = new Map();
+const pendingFamilyMemberChanges = new Map();
+const pendingFamilyListPages = new Map();
+const pendingTicketCreations = new Set();
 let discordGatewayClient = null;
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
@@ -130,6 +144,9 @@ const CATALOG_FILE = resolvePersistentDataFile("CATALOG_FILE", "data/shop-produc
 const CATALOG_AUDIT_PENDING_FILE = resolvePersistentDataFile("CATALOG_AUDIT_PENDING_FILE", "data/shop-audit-pending.json", LEGACY_CATALOG_AUDIT_PENDING_FILE);
 const ADMIN_ORDERS_FILE = resolvePersistentDataFile("ADMIN_ORDERS_FILE", "data/admin-orders.json");
 const SHOP_COUPONS_FILE = resolvePersistentDataFile("SHOP_COUPONS_FILE", "data/shop-coupons.json");
+const FAMILY_AUDIT_FILE = resolvePersistentDataFile("FAMILY_AUDIT_FILE", "data/family-audit.json");
+const FAMILY_APPLICATIONS_FILE = resolvePersistentDataFile("FAMILY_APPLICATIONS_FILE", "data/family-applications.json");
+const TICKET_CONFIG_FILE = resolvePersistentDataFile("TICKET_CONFIG_FILE", "data/ticket-config.json");
 const ORDER_WEBHOOK_URL = process.env.DISCORD_ORDER_WEBHOOK_URL || "";
 const sessions = new Map();
 const pendingLogins = new Map();
@@ -743,6 +760,9 @@ function runDailyDataBackup() {
         { name: "admin-orders", path: ADMIN_ORDERS_FILE },
         { name: "shop-products", path: CATALOG_FILE },
         { name: "shop-coupons", path: SHOP_COUPONS_FILE },
+        { name: "family-audit", path: FAMILY_AUDIT_FILE },
+        { name: "family-applications", path: FAMILY_APPLICATIONS_FILE },
+        { name: "ticket-config", path: TICKET_CONFIG_FILE },
         { name: "catalog-audit-pending", path: CATALOG_AUDIT_PENDING_FILE },
         { name: "accounting-ledger", path: ACCOUNTING_LEDGER_FILE },
         { name: "accounting-reports", path: ACCOUNTING_REPORTS_FILE },
@@ -1419,12 +1439,29 @@ async function editOriginalInteraction(payload, data) {
   const applicationId = payload.application_id;
   const token = payload.token;
   if (!applicationId || !token) throw new Error("Interaction-Token fehlt.");
+  let headers;
+  let body;
+  if (Array.isArray(data.files) && data.files.length) {
+    const files = data.files;
+    const payloadData = { ...data };
+    delete payloadData.files;
+    payloadData.attachments = files.map((file, index) => ({ id: index, filename: file.filename }));
+    const form = new FormData();
+    form.append("payload_json", JSON.stringify(payloadData));
+    files.forEach((file, index) => {
+      form.append(`files[${index}]`, new Blob([file.buffer], { type: file.contentType }), file.filename);
+    });
+    body = form;
+  } else {
+    headers = { "Content-Type": "application/json" };
+    body = JSON.stringify(data);
+  }
   const response = await discordFetch(
     `https://discord.com/api/v10/webhooks/${encodeURIComponent(applicationId)}/${encodeURIComponent(token)}/messages/@original`,
     {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data)
+      headers,
+      body
     }
   );
   if (!response.ok) {
@@ -1519,8 +1556,107 @@ async function handleDeleteFamilyInteraction(interaction) {
   }
 
   await interaction.deferReply({ ephemeral: true });
-  const result = await deleteFamily(interaction.guild, familyName);
-  await interaction.editReply({ content: familyDeletedMessage(familyName, result) });
+  const confirmation = await prepareFamilyDeletion(interaction.guild, familyName, interaction.user.id);
+  await interaction.editReply({
+    content: familyDeletionPrompt(familyName, confirmation),
+    components: familyDeletionButtons(confirmation.token),
+    allowedMentions: { parse: [] },
+  });
+}
+
+async function handleFamilyManagementInteraction(interaction) {
+  const config = discordConfig();
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId) {
+    await interaction.reply({
+      content: "Dieser Befehl kann nur auf dem konfigurierten Discord-Server verwendet werden.",
+      ephemeral: true
+    });
+    return;
+  }
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({
+      content: "Nur Server-Admins dürfen Familien verwalten.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const commandName = interaction.commandName;
+    let content;
+    let components = [];
+    if (commandName === "famadd" || commandName === "famremove") {
+      const familyName = interaction.options.getString("familie", true).trim();
+      const member = interaction.options.getUser("mitglied", true);
+      const confirmation = await prepareFamilyMemberChange(
+        interaction.guild,
+        familyName,
+        member.id,
+        commandName === "famadd",
+        interaction.user.id,
+        interaction.user.username
+      );
+      await interaction.editReply({
+        content: familyMemberChangePrompt(confirmation),
+        components: familyMemberChangeButtons(confirmation.token),
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    if (commandName === "listfam") {
+      const page = await prepareFamilyList(interaction.guild, interaction.user.id);
+      content = page.content;
+      components = page.components;
+    } else if (commandName === "famcheck") {
+      content = await checkFamilies(interaction.guild);
+    } else if (commandName === "famuebersicht") {
+      content = await getFamilyOverview(interaction.guild);
+    } else if (commandName === "famrolle") {
+      content = await getFamilyRolesPage(interaction.guild, interaction.options.getInteger("seite") || 1);
+    } else if (commandName === "famfarbe") {
+      content = await setFamilyColor(
+        interaction.guild,
+        interaction.options.getString("familie", true).trim(),
+        interaction.options.getString("farbe", true),
+        interaction.user.id
+      );
+    } else if (commandName === "famtopic") {
+      content = await setFamilyTopic(
+        interaction.guild,
+        interaction.options.getString("familie", true).trim(),
+        interaction.options.getString("thema") || "",
+        interaction.user.id
+      );
+    } else if (commandName === "famaktivitaet") {
+      content = await getFamilyActivity(interaction.guild, interaction.options.getString("familie", true).trim());
+    } else if (commandName === "famaudit") {
+      content = getFamilyAudit(
+        interaction.options.getString("suche") || "",
+        interaction.options.getInteger("anzahl") || 10
+      );
+    } else if (commandName === "famexport") {
+      const exported = await exportFamilies(interaction.guild, interaction.options.getString("format", true));
+      await interaction.editReply({
+        content: "Familienressourcen wurden exportiert.",
+        files: [new AttachmentBuilder(exported.buffer, { name: exported.filename })]
+      });
+      return;
+    } else if (commandName === "faminfo") {
+      content = await getFamilyInfo(interaction.guild, interaction.options.getString("name", true).trim());
+    } else if (commandName === "famrename") {
+      const oldName = interaction.options.getString("alt", true).trim();
+      const newName = interaction.options.getString("neu", true).trim();
+      content = await renameFamily(interaction.guild, oldName, newName, interaction.user.id);
+    }
+    await interaction.editReply({ content, components, allowedMentions: { parse: [] } });
+  } catch (error) {
+    console.error(`Discord-Slash-Command /${interaction.commandName} fehlgeschlagen:`, error.message);
+    await interaction.editReply({
+      content: `/${interaction.commandName} fehlgeschlagen: ${error.message}`,
+      allowedMentions: { parse: [] }
+    });
+  }
 }
 
 function familySlug(familyName) {
@@ -1536,6 +1672,1070 @@ function familySlug(familyName) {
 
 function familyCreatedMessage(familyName, result) {
   return `Familie **${familyName}** wurde eingerichtet: <#${result.channelId}>. Die Rolle <@&${result.roleId}> wurde dir zugewiesen.`;
+}
+
+async function logFamilyAudit(action, familyName, actorId, details = "") {
+  const suffix = details ? `\n${details}` : "";
+  const timestamp = new Date().toISOString();
+  try {
+    const entries = JSON.parse(fs.readFileSync(FAMILY_AUDIT_FILE, "utf8"));
+    if (!Array.isArray(entries)) throw new Error("Die Familien-Audit-Datei enthält keine gültige Liste.");
+    entries.unshift({
+      id: crypto.randomUUID(),
+      action,
+      familyName,
+      actorId,
+      details,
+      timestamp
+    });
+    writeAccountingJson(FAMILY_AUDIT_FILE, entries.slice(0, 5000));
+  } catch (error) {
+    console.error("Familien-Audit konnte nicht lokal gespeichert werden:", error.message);
+  }
+  const message = `Familienverwaltung: **${action}**\nFamilie: **${familyName}**\nAusgeführt von: <@${actorId}> (${actorId})\nZeit: ${timestamp}${suffix}`;
+  try {
+    const result = await postToDiscordChannel(
+      { content: message, allowed_mentions: { parse: [] } },
+      CATALOG_AUDIT_CHANNEL_ID,
+      false
+    );
+    if (result.method !== "bot") throw new Error("Discord-Bot ist nicht konfiguriert.");
+  } catch (error) {
+    console.error(`Familien-Audit konnte nicht an Kanal ${CATALOG_AUDIT_CHANNEL_ID} gesendet werden:`, error.message);
+  }
+}
+
+async function familyEntries(guild, loadMembers = false) {
+  const [channels, roles] = await Promise.all([
+    guild.channels.fetch(),
+    guild.roles.fetch()
+  ]);
+  const categories = channels.filter(channel =>
+    channel?.type === ChannelType.GuildCategory
+    && channel.name.toLowerCase() === FAMILY_CATEGORY_NAME.toLowerCase()
+  );
+  if (categories.size > 1) {
+    throw new Error(`Es gibt mehrere Kategorien namens „${FAMILY_CATEGORY_NAME}“. Bitte bereinige die doppelten Kategorien zuerst.`);
+  }
+  const category = categories.first();
+  if (!category) return [];
+
+  const familyChannels = channels.filter(channel =>
+    channel?.type === ChannelType.GuildText
+    && channel.parentId === category.id
+  );
+  const familyRoles = roles.filter(role => role.id !== guild.roles.everyone.id && !role.managed);
+  if (loadMembers && familyRoles.size) await guild.members.fetch();
+
+  return familyChannels.map(channel => {
+    const matchingRoles = familyRoles.filter(role => familySlug(role.name) === channel.name);
+    return {
+      channel,
+      role: matchingRoles.size === 1 ? matchingRoles.first() : null,
+      matchingRoles
+    };
+  }).sort((left, right) => left.channel.name.localeCompare(right.channel.name, "de"));
+}
+
+function familyNameFromEntry(entry) {
+  return entry.role?.name || entry.channel.name;
+}
+
+function familyListLine({ channel, role, matchingRoles }) {
+  const roleStatus = matchingRoles?.size > 1
+    ? `mehrere passende Rollen (${matchingRoles.size})`
+    : role ? `${role.members.size} Mitglied(er)` : "Rolle fehlt";
+  return `• **${familyNameFromEntry({ channel, role })}** · <#${channel.id}> · ${roleStatus}`;
+}
+
+function familyListPageData(state, index) {
+  const start = index * state.pageSize;
+  const lines = state.entries.slice(start, start + state.pageSize).map(familyListLine);
+  const content = `**Familien (${state.entries.length}) · Seite ${index + 1}/${state.pageCount}**\n${lines.join("\n")}`;
+  const components = state.pageCount > 1
+    ? [new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`famlist:prev:${state.token}`)
+        .setLabel("Zurück")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(index === 0),
+      new ButtonBuilder()
+        .setCustomId(`famlist:next:${state.token}`)
+        .setLabel("Weiter")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(index === state.pageCount - 1)
+    )]
+    : [];
+  return { content, components };
+}
+
+async function prepareFamilyList(guild, userId) {
+  const entries = await familyEntries(guild, true);
+  if (!entries.length) {
+    return { content: "Es wurden keine Familienkanäle in der Kategorie „Familien“ gefunden.", components: [] };
+  }
+  const token = crypto.randomUUID();
+  for (const [existingToken, state] of pendingFamilyListPages) {
+    if (state.expiresAt <= Date.now()) pendingFamilyListPages.delete(existingToken);
+  }
+  const state = {
+    token,
+    guildId: guild.id,
+    userId,
+    entries,
+    pageSize: 8,
+    pageCount: Math.ceil(entries.length / 8),
+    expiresAt: Date.now() + 5 * 60 * 1000
+  };
+  pendingFamilyListPages.set(token, state);
+  return familyListPageData(state, 0);
+}
+
+function moveFamilyListPage(token, direction, guildId, userId) {
+  const state = pendingFamilyListPages.get(token);
+  if (!state || state.expiresAt <= Date.now()) {
+    pendingFamilyListPages.delete(token);
+    throw new Error("Diese Familienliste ist abgelaufen. Bitte starte `/listfam` erneut.");
+  }
+  if (state.guildId !== guildId || state.userId !== userId) {
+    throw new Error("Diese Familienliste gehört einer anderen Person oder einem anderen Server.");
+  }
+  state.page = Math.max(0, Math.min(state.pageCount - 1, (state.page || 0) + direction));
+  return familyListPageData(state, state.page);
+}
+
+async function checkFamilies(guild) {
+  const [channels, roles] = await Promise.all([
+    guild.channels.fetch(),
+    guild.roles.fetch()
+  ]);
+  const categories = channels.filter(channel =>
+    channel?.type === ChannelType.GuildCategory
+    && channel.name.toLowerCase() === FAMILY_CATEGORY_NAME.toLowerCase()
+  );
+  if (categories.size > 1) {
+    throw new Error(`Es gibt mehrere Kategorien namens „${FAMILY_CATEGORY_NAME}“. Bitte bereinige die doppelten Kategorien zuerst.`);
+  }
+  const category = categories.first();
+  if (!category) return `Die Kategorie „${FAMILY_CATEGORY_NAME}“ wurde nicht gefunden. Es wurde keine Prüfung durchgeführt.`;
+
+  const familyChannels = channels.filter(channel =>
+    channel?.type === ChannelType.GuildText
+    && channel.parentId === category.id
+  );
+  const familyRoles = roles.filter(role => role.id !== guild.roles.everyone.id && !role.managed);
+  if (familyRoles.size) await guild.members.fetch();
+  const channelsWithoutRoles = [];
+  const emptyFamilies = [];
+  const rolesMatchedToChannels = new Set();
+  for (const channel of familyChannels.values()) {
+    const matchingRoles = familyRoles.filter(role => familySlug(role.name) === channel.name);
+    if (matchingRoles.size !== 1) {
+      channelsWithoutRoles.push({ channel, duplicateCount: matchingRoles.size });
+    } else {
+      const familyRole = matchingRoles.first();
+      rolesMatchedToChannels.add(familyRole.id);
+      if (familyRole.members.size === 0) emptyFamilies.push({ channel, role: familyRole });
+    }
+  }
+  const orphanRoleCandidates = familyRoles.filter(role =>
+    !rolesMatchedToChannels.has(role.id)
+    && role.hoist === false
+    && role.mentionable === false
+    && role.permissions.bitfield === 0n
+    && role.color === 0
+  );
+  if (!channelsWithoutRoles.length && !orphanRoleCandidates.length && !emptyFamilies.length) {
+    return `Familienprüfung abgeschlossen: ${familyChannels.size} Kanal/Kanäle und passende Rollen gefunden. Keine Abweichungen.`;
+  }
+
+  const lines = ["**Familienprüfung: mögliche Abweichungen**"];
+  if (channelsWithoutRoles.length) {
+    lines.push("", "**Kanäle ohne eindeutige passende Rolle:**");
+    lines.push(...channelsWithoutRoles.map(({ channel, duplicateCount }) =>
+      duplicateCount
+        ? `• <#${channel.id}> (\`${channel.name}\`) · ${duplicateCount} passende Rollen`
+        : `• <#${channel.id}> (\`${channel.name}\`) · keine passende Rolle`
+    ));
+  }
+  if (orphanRoleCandidates.length) {
+    lines.push("", "**Mögliche verwaiste Familienrollen (bitte manuell prüfen):**");
+    lines.push(...orphanRoleCandidates.map(role => `• <@&${role.id}>`));
+  }
+  if (emptyFamilies.length) {
+    lines.push("", "**Leere Familien (keine Mitglieder mit Familienrolle):**");
+    lines.push(...emptyFamilies.map(({ channel, role }) =>
+      `• **${role.name}** · <#${channel.id}>`
+    ));
+  }
+  lines.push("", "Rollen werden nur als Kandidaten angezeigt, wenn sie den Einstellungen neu erstellter Familienrollen entsprechen. Es werden keine Ressourcen geändert.");
+  let content = "";
+  let includedLines = 0;
+  for (const line of lines) {
+    if (content.length + line.length + 1 > 1900) break;
+    content += `${content ? "\n" : ""}${line}`;
+    includedLines++;
+  }
+  if (includedLines < lines.length) content += "\n… weitere Einträge wurden zur Einhaltung des Discord-Limits weggelassen.";
+  return content;
+}
+
+async function getFamilyOverview(guild) {
+  const entries = await familyEntries(guild, true);
+  const memberCount = entries.reduce((sum, entry) => sum + (entry.role?.members.size || 0), 0);
+  const emptyCount = entries.filter(entry => entry.role && entry.role.members.size === 0).length;
+  const missingRoleCount = entries.filter(entry => !entry.role).length;
+  const duplicateRoleCount = entries.filter(entry => entry.matchingRoles.size > 1).length;
+  return [
+    "**Familienübersicht**",
+    `Familienkanäle: **${entries.length}**`,
+    `Mitgliederzuordnungen: **${memberCount}**`,
+    `Leere Familien: **${emptyCount}**`,
+    `Kanäle ohne eindeutige Rolle: **${missingRoleCount}**`,
+    `Familien mit mehrfach passender Rolle: **${duplicateRoleCount}**`
+  ].join("\n");
+}
+
+async function getFamilyRolesPage(guild, page = 1) {
+  if (!Number.isInteger(page) || page < 1) throw new Error("Die Seitennummer muss mindestens 1 sein.");
+  const entries = await familyEntries(guild, true);
+  const pageSize = 5;
+  const pageCount = Math.max(1, Math.ceil(entries.length / pageSize));
+  if (page > pageCount) throw new Error(`Es gibt nur ${pageCount} Seite(n).`);
+  const lines = entries.slice((page - 1) * pageSize, page * pageSize).map(entry => {
+    const members = entry.role
+      ? [...entry.role.members.keys()].sort()
+      : [];
+    const listedMembers = members.slice(0, 12).map(id => `<@${id}>`).join(", ");
+    const remainder = members.length > 12 ? ` · +${members.length - 12} weitere` : "";
+    return `**${familyNameFromEntry(entry)}** · ${entry.role ? `<@&${entry.role.id}>` : "Rolle fehlt"} (${members.length})\n${listedMembers || "Keine zugeordneten Mitglieder"}${remainder}`;
+  });
+  return `**Familienrollen und Mitglieder · Seite ${page}/${pageCount}**\n${lines.join("\n\n") || "Keine Familien gefunden."}`;
+}
+
+async function setFamilyColor(guild, familyName, color, actorId) {
+  const normalized = String(color || "").trim();
+  if (!/^#?[0-9a-f]{6}$/i.test(normalized)) {
+    throw new Error("Bitte gib eine HEX-Farbe mit sechs Stellen an, zum Beispiel `#3366ff`.");
+  }
+  const { role } = await findFamilyResources(guild, familyName);
+  if (!role) throw new Error(`Die Familienrolle für „${familyName}“ wurde nicht eindeutig gefunden.`);
+  const botMember = await guild.members.fetchMe();
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    throw new Error("Dem Bot fehlt die Serverberechtigung „Rollen verwalten“.");
+  }
+  const hexColor = `#${normalized.replace(/^#/, "")}`;
+  await role.setColor(hexColor, `Rollenfarbe durch Admin ${actorId} geändert`);
+  await logFamilyAudit("Rollenfarbe geändert", familyName, actorId, `Farbe: ${hexColor}`);
+  return `Die Rolle der Familie **${familyName}** hat jetzt die Farbe ${hexColor}.`;
+}
+
+async function setFamilyTopic(guild, familyName, topic, actorId) {
+  const normalized = String(topic || "").trim();
+  if (normalized.length > 1024) throw new Error("Das Kanalthema darf höchstens 1024 Zeichen lang sein.");
+  const { channel } = await findFamilyResources(guild, familyName);
+  if (!channel) throw new Error(`Der Familienkanal für „${familyName}“ wurde nicht eindeutig gefunden.`);
+  const botMember = await guild.members.fetchMe();
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageChannels)
+    || !channel.permissionsFor(botMember)?.has(PermissionFlagsBits.ManageChannels)) {
+    throw new Error("Dem Bot fehlt die Serverberechtigung „Kanäle verwalten“.");
+  }
+  await channel.setTopic(normalized || null, `Kanalthema durch Admin ${actorId} geändert`);
+  await logFamilyAudit("Kanalthema geändert", familyName, actorId, `Neues Thema: ${normalized || "(leer)"}`);
+  return `Das Thema von <#${channel.id}> wurde aktualisiert.`;
+}
+
+async function getFamilyActivity(guild, familyName) {
+  const { channel } = await findFamilyResources(guild, familyName);
+  if (!channel) throw new Error(`Der Familienkanal für „${familyName}“ wurde nicht eindeutig gefunden.`);
+  const botMember = await guild.members.fetchMe();
+  if (!channel.permissionsFor(botMember)?.has(PermissionFlagsBits.ViewChannel)
+    || !channel.permissionsFor(botMember)?.has(PermissionFlagsBits.ReadMessageHistory)) {
+    throw new Error("Dem Bot fehlen im Familienkanal „Kanal ansehen“ oder „Nachrichtenverlauf ansehen“.");
+  }
+  const latest = await channel.messages.fetch({ limit: 1 });
+  const lastMessage = latest.first();
+  return lastMessage
+    ? `Letzte Aktivität in **${familyName}**: ${lastMessage.createdAt.toLocaleString("de-DE")}.\nEs wurden keine Nachrichteninhalte in der Ausgabe angezeigt.`
+    : `Im Kanal **${familyName}** wurden keine Nachrichten gefunden.`;
+}
+
+function getFamilyAudit(searchTerm = "", limit = 10) {
+  const entries = JSON.parse(fs.readFileSync(FAMILY_AUDIT_FILE, "utf8"));
+  if (!Array.isArray(entries)) throw new Error("Die Familien-Audit-Datei enthält keine gültige Liste.");
+  const query = String(searchTerm || "").trim().toLocaleLowerCase("de");
+  const matches = entries.filter(entry => {
+    const searchable = `${entry.action} ${entry.familyName} ${entry.actorId} ${entry.details}`.toLocaleLowerCase("de");
+    return !query || searchable.includes(query);
+  }).slice(0, Math.max(1, Math.min(20, limit)));
+  if (!matches.length) return "Keine passenden Familien-Audit-Einträge gefunden.";
+  return `**Familien-Audit · ${matches.length} Eintrag/Einträge**\n${matches.map(entry =>
+    `• **${entry.action}** · **${entry.familyName}** · <@${entry.actorId}> · ${new Date(entry.timestamp).toLocaleString("de-DE")}${entry.details ? `\n  ${entry.details}` : ""}`
+  ).join("\n")}`.slice(0, 1900);
+}
+
+function readFamilyApplications() {
+  const applications = JSON.parse(fs.readFileSync(FAMILY_APPLICATIONS_FILE, "utf8"));
+  if (!Array.isArray(applications)) throw new Error("Die Datei für Familienbeitritte ist ungültig.");
+  return applications;
+}
+
+function familyApplicationButtons(token) {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`famapply:approve:${token}`)
+      .setLabel("Annehmen")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`famapply:reject:${token}`)
+      .setLabel("Ablehnen")
+      .setStyle(ButtonStyle.Danger)
+  )];
+}
+
+async function requestFamilyMembership(guild, familyName, user) {
+  const { role, channel } = await findFamilyResources(guild, familyName);
+  if (!role || !channel) throw new Error(`Familie „${familyName}“ wurde nicht eindeutig gefunden.`);
+  const member = await guild.members.fetch(user.id);
+  if (member.roles.cache.has(role.id)) throw new Error(`Du bist bereits Mitglied von **${familyName}**.`);
+  const applications = readFamilyApplications();
+  const existing = applications.find(application =>
+    application.guildId === guild.id
+    && application.userId === user.id
+    && application.roleId === role.id
+    && application.status === "pending"
+  );
+  if (existing) throw new Error("Für diese Familie liegt bereits ein offener Antrag von dir vor.");
+
+  const botMember = await guild.members.fetchMe();
+  const auditChannel = await discordGatewayClient.channels.fetch(CATALOG_AUDIT_CHANNEL_ID);
+  if (!auditChannel?.isTextBased() || !auditChannel.send
+    || !auditChannel.permissionsFor(botMember)?.has(PermissionFlagsBits.SendMessages)) {
+    throw new Error("Der konfigurierte Audit-Channel ist für den Bot nicht beschreibbar.");
+  }
+  const application = {
+    token: crypto.randomUUID(),
+    guildId: guild.id,
+    familyName: role.name,
+    roleId: role.id,
+    channelId: channel.id,
+    userId: user.id,
+    username: user.tag || user.username,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+  applications.unshift(application);
+  writeAccountingJson(FAMILY_APPLICATIONS_FILE, applications.slice(0, 1000));
+  try {
+    await auditChannel.send({
+      content: `**Familienbeitritt beantragt**\nFamilie: **${role.name}** · <#${channel.id}>\nMitglied: <@${user.id}> (${user.id})\nZeit: ${application.createdAt}`,
+      components: familyApplicationButtons(application.token),
+      allowedMentions: { users: [user.id] }
+    });
+  } catch (error) {
+    const savedApplications = readFamilyApplications()
+      .filter(saved => saved.token !== application.token);
+    writeAccountingJson(FAMILY_APPLICATIONS_FILE, savedApplications);
+    throw new Error(`Der Antrag konnte nicht an die Admins gesendet werden: ${error.message}`);
+  }
+  await logFamilyAudit("Beitritt beantragt", role.name, user.id, `Mitglied: ${user.tag || user.username} (${user.id})`);
+  return `Dein Antrag für **${role.name}** wurde an die zuständigen Admins gesendet.`;
+}
+
+async function completeFamilyApplication(token, action, actorId, guild) {
+  const applications = readFamilyApplications();
+  const index = applications.findIndex(application => application.token === token);
+  if (index < 0 || applications[index].status !== "pending") {
+    throw new Error("Dieser Familienantrag wurde bereits bearbeitet oder ist nicht mehr verfügbar.");
+  }
+  const application = applications[index];
+  if (application.guildId !== guild.id) throw new Error("Dieser Antrag gehört zu einem anderen Server.");
+  const member = await guild.members.fetch(actorId);
+  const hasAdminRole = Boolean(discordConfig().catalogAdminRoleId
+    && member.roles.cache.has(discordConfig().catalogAdminRoleId));
+  if (!member.permissions.has(PermissionFlagsBits.Administrator) && !hasAdminRole) {
+    throw new Error("Nur Server-Admins oder Katalog-Admins dürfen Familienanträge bearbeiten.");
+  }
+
+  if (action === "approve") {
+    const role = await guild.roles.fetch(application.roleId);
+    if (!role) throw new Error("Die Familienrolle wurde inzwischen gelöscht.");
+    const applicant = await guild.members.fetch(application.userId);
+    if (!applicant.roles.cache.has(role.id)) {
+      const botMember = await guild.members.fetchMe();
+      if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+        throw new Error("Dem Bot fehlt die Serverberechtigung „Rollen verwalten“.");
+      }
+      await applicant.roles.add(role, `Familienantrag durch Admin ${actorId} angenommen`);
+    }
+  }
+
+  application.status = action === "approve" ? "approved" : "rejected";
+  application.reviewedAt = new Date().toISOString();
+  application.reviewedBy = actorId;
+  writeAccountingJson(FAMILY_APPLICATIONS_FILE, applications);
+  await logFamilyAudit(
+    action === "approve" ? "Beitrittsantrag angenommen" : "Beitrittsantrag abgelehnt",
+    application.familyName,
+    actorId,
+    `Mitglied: ${application.username} (${application.userId})`
+  );
+  try {
+    const applicant = await guild.members.fetch(application.userId);
+    await applicant.send(action === "approve"
+      ? `Dein Antrag für die Familie **${application.familyName}** wurde angenommen.`
+      : `Dein Antrag für die Familie **${application.familyName}** wurde abgelehnt.`);
+  } catch (error) {
+    console.warn(`Familienantrag wurde bearbeitet, aber die DM an ${application.userId} konnte nicht gesendet werden:`, error.message);
+  }
+  return action === "approve"
+    ? `Der Antrag von <@${application.userId}> für **${application.familyName}** wurde angenommen.`
+    : `Der Antrag von <@${application.userId}> für **${application.familyName}** wurde abgelehnt.`;
+}
+
+async function exportFamilies(guild, format) {
+  const entries = await familyEntries(guild, true);
+  const rows = entries.map(entry => ({
+    family: familyNameFromEntry(entry),
+    channelId: entry.channel.id,
+    channelName: entry.channel.name,
+    roleId: entry.role?.id || "",
+    memberIds: entry.role ? [...entry.role.members.keys()] : [],
+    members: entry.role
+      ? [...entry.role.members.values()].map(member => ({ id: member.id, name: member.displayName }))
+      : []
+  }));
+  if (format === "json") {
+    const result = {
+      filename: "familien-export.json",
+      contentType: "application/json",
+      buffer: Buffer.from(JSON.stringify({ exportedAt: new Date().toISOString(), families: rows }, null, 2), "utf8")
+    };
+    if (result.buffer.length > 7_500_000) throw new Error("Der Export ist größer als Discords Dateilimit von 7,5 MB.");
+    return result;
+  }
+  if (format !== "csv") throw new Error("Bitte wähle JSON oder CSV als Exportformat.");
+  const escapeCsv = value => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const lines = [
+    ["Familie", "Kanal-ID", "Kanalname", "Rollen-ID", "Mitglieds-IDs"].map(escapeCsv).join(","),
+    ...rows.map(row => [
+      row.family,
+      row.channelId,
+      row.channelName,
+      row.roleId,
+      row.memberIds.join(";")
+    ].map(escapeCsv).join(","))
+  ];
+  const result = {
+    filename: "familien-export.csv",
+    contentType: "text/csv; charset=utf-8",
+    buffer: Buffer.from(`\uFEFF${lines.join("\r\n")}`, "utf8")
+  };
+  if (result.buffer.length > 7_500_000) throw new Error("Der Export ist größer als Discords Dateilimit von 7,5 MB.");
+  return result;
+}
+
+async function handleFamilyApplicationInteraction(interaction) {
+  const config = discordConfig();
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId) {
+    await interaction.reply({
+      content: "Dieser Befehl kann nur auf dem konfigurierten Discord-Server verwendet werden.",
+      ephemeral: true
+    });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const message = await requestFamilyMembership(
+      interaction.guild,
+      interaction.options.getString("familie", true).trim(),
+      interaction.user
+    );
+    await interaction.editReply({ content: message, allowedMentions: { parse: [] } });
+  } catch (error) {
+    await interaction.editReply({ content: error.message, allowedMentions: { parse: [] } });
+  }
+}
+
+function readTicketConfiguration() {
+  const config = JSON.parse(fs.readFileSync(TICKET_CONFIG_FILE, "utf8"));
+  if (Array.isArray(config) && config.length === 0) return null;
+  if (!config || typeof config !== "object"
+    || !/^\d{17,20}$/.test(config.panelChannelId || "")
+    || !/^\d{17,20}$/.test(config.categoryId || "")
+    || !/^\d{17,20}$/.test(config.adminRoleId || "")
+    || !Array.isArray(config.types)
+    || config.types.length < 1
+    || config.types.length > 25) {
+    throw new Error("Die Ticketkonfiguration ist ungültig. Bitte führe `/ticketeinrichten` erneut aus.");
+  }
+  return config;
+}
+
+function ticketPanelComponents(types) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ticket:types")
+    .setPlaceholder("Wähle die passende Ticket-Art")
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(types.map((type, index) => ({
+      label: type,
+      value: String(index),
+      description: `Ticket: ${type}`.slice(0, 100)
+    })));
+  return [new ActionRowBuilder().addComponents(menu)];
+}
+
+function ticketCloseComponents() {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ticket:close")
+      .setLabel("Ticket schließen")
+      .setStyle(ButtonStyle.Danger)
+  )];
+}
+
+async function configureTickets(guild, panelChannel, category, archiveCategory, typeInput) {
+  const types = normalizeTicketTypes(typeInput);
+  const config = discordConfig();
+  if (!config.catalogAdminRoleId || !/^\d{17,20}$/.test(config.catalogAdminRoleId)) {
+    throw new Error("DISCORD_CATALOG_ADMIN_ROLE_ID muss gesetzt sein, damit Katalog-Admins Zugriff auf Tickets erhalten.");
+  }
+  const [botMember, adminRole] = await Promise.all([
+    guild.members.fetchMe(),
+    guild.roles.fetch(config.catalogAdminRoleId)
+  ]);
+  if (!adminRole) throw new Error("Die konfigurierte Katalog-Admin-Rolle wurde auf diesem Server nicht gefunden.");
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageChannels)
+    || !botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    throw new Error("Dem Bot fehlen „Kanäle verwalten“ oder „Rollen verwalten“.");
+  }
+  if (!panelChannel?.isTextBased() || !panelChannel.send
+    || !panelChannel.permissionsFor(botMember)?.has(PermissionFlagsBits.ViewChannel)
+    || !panelChannel.permissionsFor(botMember)?.has(PermissionFlagsBits.SendMessages)) {
+    throw new Error("Der ausgewählte Ticket-Panel-Kanal ist für den Bot nicht beschreibbar.");
+  }
+  if (category?.type !== ChannelType.GuildCategory
+    || archiveCategory && archiveCategory.type !== ChannelType.GuildCategory) {
+    throw new Error("Bitte wähle für Ticket- und Archivkategorie jeweils eine Kategorie aus.");
+  }
+  const panel = await panelChannel.send({
+    content: "**Support-Tickets**\nWähle eine Ticket-Art aus. Dein Ticket ist nur für dich und die Katalog-Admins sichtbar.",
+    components: ticketPanelComponents(types)
+  });
+  const savedConfig = {
+    panelChannelId: panelChannel.id,
+    panelMessageId: panel.id,
+    categoryId: category.id,
+    archiveCategoryId: archiveCategory?.id || null,
+    adminRoleId: adminRole.id,
+    types,
+    configuredAt: new Date().toISOString()
+  };
+  try {
+    writeAccountingJson(TICKET_CONFIG_FILE, savedConfig);
+  } catch (error) {
+    await panel.delete().catch(deleteError => {
+      console.error("Nicht gespeichertes Ticket-Panel konnte nicht entfernt werden:", deleteError.message);
+    });
+    throw error;
+  }
+  return `Ticket-System eingerichtet. Panel: <#${panelChannel.id}> · Ticket-Arten: ${types.join(", ")}.`;
+}
+
+async function createTicketChannel(guild, userId, selectedType) {
+  if (pendingTicketCreations.has(userId)) throw new Error("Deine Ticketerstellung wird bereits verarbeitet.");
+  pendingTicketCreations.add(userId);
+  try {
+    return await createTicketChannelUnlocked(guild, userId, selectedType);
+  } finally {
+    pendingTicketCreations.delete(userId);
+  }
+}
+
+async function createTicketChannelUnlocked(guild, userId, selectedType) {
+  const config = readTicketConfiguration();
+  if (!config) throw new Error("Das Ticketsystem ist noch nicht eingerichtet. Ein Admin muss `/ticketeinrichten` ausführen.");
+  const typeIndex = Number(selectedType);
+  if (!Number.isInteger(typeIndex) || config.types[typeIndex] === undefined) {
+    throw new Error("Diese Ticket-Art ist nicht mehr verfügbar. Bitte nutze das aktuelle Ticket-Panel.");
+  }
+  const type = config.types[typeIndex];
+  const channels = await guild.channels.fetch();
+  const existing = channels.find(channel => {
+    const ticket = parseTicketTopic(channel?.topic);
+    return ticket?.status === "open" && ticket.ownerId === userId;
+  });
+  if (existing) throw new Error(`Du hast bereits ein offenes Ticket: <#${existing.id}>.`);
+
+  const [botMember, adminRole, owner] = await Promise.all([
+    guild.members.fetchMe(),
+    guild.roles.fetch(config.adminRoleId),
+    guild.members.fetch(userId)
+  ]);
+  if (!adminRole) throw new Error("Die konfigurierte Katalog-Admin-Rolle wurde gelöscht.");
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    throw new Error("Dem Bot fehlt die Serverberechtigung „Kanäle verwalten“.");
+  }
+  const category = await guild.channels.fetch(config.categoryId);
+  if (category?.type !== ChannelType.GuildCategory) throw new Error("Die konfigurierte Ticket-Kategorie wurde gelöscht.");
+  const channelName = `ticket-${ticketChannelSlug(type)}-${ticketChannelSlug(owner.user.username)}`.slice(0, 100);
+  const ticket = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: category.id,
+    topic: createTicketTopic({
+      ownerId: owner.id,
+      type,
+      status: "open",
+      createdAt: new Date().toISOString()
+    }),
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      {
+        id: owner.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.AttachFiles
+        ]
+      },
+      {
+        id: adminRole.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.ManageMessages
+        ]
+      },
+      {
+        id: botMember.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.ManageChannels,
+          PermissionFlagsBits.AttachFiles
+        ]
+      }
+    ],
+    reason: `Support-Ticket (${type}) für ${owner.user.tag}`
+  });
+  try {
+    await ticket.send({
+      content: `Hallo <@${owner.id}>! Dein Ticket **${type}** wurde erstellt. Beschreibe dein Anliegen hier; die Katalog-Admins helfen dir weiter.`,
+      components: ticketCloseComponents(),
+      allowedMentions: { users: [owner.id] }
+    });
+  } catch (error) {
+    await ticket.delete("Ticket konnte nicht initialisiert werden").catch(deleteError => {
+      console.error("Nicht initialisiertes Ticket konnte nicht entfernt werden:", deleteError.message);
+    });
+    throw new Error(`Der Ticket-Kanal wurde erstellt, aber die Startnachricht konnte nicht gesendet werden: ${error.message}`);
+  }
+  return ticket;
+}
+
+async function ticketTranscript(channel) {
+  const messages = [];
+  let before;
+  for (let page = 0; page < 10; page++) {
+    const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+    if (!batch.size) break;
+    messages.push(...batch.values());
+    before = batch.last().id;
+    if (batch.size < 100) break;
+  }
+  messages.sort((left, right) => left.createdTimestamp - right.createdTimestamp);
+  const transcriptLines = [
+    `Ticket: ${channel.name}`,
+    `Channel-ID: ${channel.id}`,
+    `Exportiert: ${new Date().toISOString()}`,
+    messages.length >= 1000 ? "Hinweis: Der Export ist auf die letzten 1.000 Nachrichten begrenzt." : "",
+    "",
+    ...messages.map(message => {
+      const attachments = [...message.attachments.values()].map(attachment => attachment.url);
+      return [
+        `[${message.createdAt.toISOString()}] ${message.author.tag} (${message.author.id})`,
+        message.content || (attachments.length ? "(Anhang)" : "(keine Textnachricht)"),
+        ...attachments.map(url => `Anhang: ${url}`),
+        ""
+      ].join("\n");
+    })
+  ];
+  let transcript = transcriptLines.join("\n");
+  if (transcript.length > 900_000) {
+    const omittedCharacters = transcript.length - 900_000;
+    const marker = `\n[Transkript gekürzt; ${omittedCharacters} Zeichen ausgelassen]\n`;
+    const visibleCharacters = 900_000 - marker.length;
+    const beginning = Math.floor(visibleCharacters / 2);
+    transcript = `${transcript.slice(0, beginning)}${marker}${transcript.slice(-(visibleCharacters - beginning))}`;
+  }
+  return Buffer.from(transcript, "utf8");
+}
+
+async function closeTicketChannel(channel, actor, guild) {
+  const ticket = parseTicketTopic(channel.topic);
+  if (!ticket || ticket.status !== "open") throw new Error("Dieser Kanal ist kein offenes Ticket.");
+  const config = readTicketConfiguration();
+  if (!config) throw new Error("Die Ticketkonfiguration wurde nicht gefunden.");
+  const member = actor.roles?.cache ? actor : await guild.members.fetch(actor.id);
+  const canManage = member.permissions.has(PermissionFlagsBits.Administrator)
+    || member.roles.cache.has(config.adminRoleId);
+  if (ticket.ownerId !== actor.id && !canManage) {
+    throw new Error("Nur der Ersteller oder ein Katalog-Admin darf dieses Ticket schließen.");
+  }
+
+  const botMember = await guild.members.fetchMe();
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageChannels)
+    || !channel.permissionsFor(botMember)?.has(PermissionFlagsBits.ViewChannel)
+    || !channel.permissionsFor(botMember)?.has(PermissionFlagsBits.ReadMessageHistory)) {
+    throw new Error("Dem Bot fehlen im Ticket „Kanal ansehen“ oder „Nachrichtenverlauf ansehen“ bzw. „Kanäle verwalten“.");
+  }
+  const auditChannel = await discordGatewayClient.channels.fetch(CATALOG_AUDIT_CHANNEL_ID);
+  if (!auditChannel?.isTextBased() || !auditChannel.send
+    || !auditChannel.permissionsFor(botMember)?.has(PermissionFlagsBits.ViewChannel)
+    || !auditChannel.permissionsFor(botMember)?.has(PermissionFlagsBits.SendMessages)
+    || !auditChannel.permissionsFor(botMember)?.has(PermissionFlagsBits.AttachFiles)) {
+    throw new Error("Der Audit-Channel ist für den Ticket-Transkriptversand nicht beschreibbar oder der Bot darf keine Dateien anhängen.");
+  }
+  const archive = config.archiveCategoryId
+    ? await guild.channels.fetch(config.archiveCategoryId)
+    : null;
+  if (config.archiveCategoryId && archive?.type !== ChannelType.GuildCategory) {
+    throw new Error("Die konfigurierte Archivkategorie wurde gelöscht.");
+  }
+  const transcript = await ticketTranscript(channel);
+  await auditChannel.send({
+    content: `Transkript des geschlossenen Tickets **${channel.name}** · Art: **${ticket.type}** · Ersteller: <@${ticket.ownerId}> (${ticket.ownerId}) · geschlossen von <@${actor.id}>`,
+    files: [new AttachmentBuilder(transcript, { name: `transkript-${channel.id}.txt` })],
+    allowedMentions: { parse: [] }
+  });
+
+  await channel.permissionOverwrites.edit(ticket.ownerId, {
+    SendMessages: false,
+    AddReactions: false
+  });
+  await channel.permissionOverwrites.edit(config.adminRoleId, {
+    SendMessages: false,
+    AddReactions: false
+  });
+  await channel.setTopic(createTicketTopic({ ...ticket, status: "closed" }), `Ticket durch ${actor.id} geschlossen`);
+  if (archive) await channel.setParent(archive.id, { lockPermissions: false });
+  if (!channel.name.startsWith("archiviert-")) {
+    await channel.setName(`archiviert-${channel.name}`.slice(0, 100));
+  }
+  return `Ticket archiviert. Das Transkript wurde in <#${CATALOG_AUDIT_CHANNEL_ID}> veröffentlicht.`;
+}
+
+async function handleTicketSetupInteraction(interaction) {
+  const config = discordConfig();
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId
+    || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({
+      content: "Nur Server-Admins auf dem konfigurierten Server dürfen das Ticketsystem einrichten.",
+      ephemeral: true
+    });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const panel = interaction.options.getChannel("panel", true);
+    const category = interaction.options.getChannel("kategorie", true);
+    const archive = interaction.options.getChannel("archiv");
+    const result = await configureTickets(
+      interaction.guild,
+      panel,
+      category,
+      archive,
+      interaction.options.getString("ticketarten", true)
+    );
+    await interaction.editReply({ content: result });
+  } catch (error) {
+    await interaction.editReply({ content: `Ticket-System konnte nicht eingerichtet werden: ${error.message}` });
+  }
+}
+
+async function handleTicketSelectInteraction(interaction) {
+  if (interaction.guildId !== discordConfig().guildId) {
+    await interaction.reply({ content: "Dieses Ticket-Panel gehört nicht zum konfigurierten Server.", ephemeral: true });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const config = readTicketConfiguration();
+    if (!config || interaction.channelId !== config.panelChannelId
+      || interaction.message?.id !== config.panelMessageId) {
+      throw new Error("Dieses Ticket-Panel ist nicht mehr aktuell.");
+    }
+    const channel = await createTicketChannel(interaction.guild, interaction.user.id, interaction.values[0]);
+    await interaction.editReply({ content: `Dein Ticket wurde erstellt: <#${channel.id}>.` });
+  } catch (error) {
+    await interaction.editReply({ content: error.message, allowedMentions: { parse: [] } });
+  }
+}
+
+async function handleTicketCloseInteraction(interaction) {
+  await interaction.deferUpdate();
+  try {
+    const content = await closeTicketChannel(interaction.channel, interaction.member, interaction.guild);
+    await interaction.editReply({ content, components: [], allowedMentions: { parse: [] } });
+  } catch (error) {
+    await interaction.followUp({ content: error.message, ephemeral: true, allowedMentions: { parse: [] } });
+  }
+}
+
+async function handleFamilyApplicationButton(interaction) {
+  const match = interaction.customId.match(/^famapply:(approve|reject):([a-f0-9-]{36})$/i);
+  if (!match) return false;
+  await interaction.deferUpdate();
+  try {
+    const result = await completeFamilyApplication(
+      match[2],
+      match[1].toLowerCase(),
+      interaction.user.id,
+      interaction.guild
+    );
+    await interaction.editReply({ content: result, components: [], allowedMentions: { parse: [] } });
+  } catch (error) {
+    await interaction.followUp({ content: error.message, ephemeral: true, allowedMentions: { parse: [] } });
+  }
+  return true;
+}
+
+async function handleHttpTicketSetup(payload, config) {
+  const isAdmin = (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n;
+  if (payload.guild_id !== config.guildId || !isAdmin) {
+    throw new Error("Nur Server-Admins auf dem konfigurierten Server dürfen das Ticketsystem einrichten.");
+  }
+  if (!discordGatewayClient?.isReady()) throw new Error("Der Bot ist noch nicht verbunden.");
+  const options = Object.fromEntries((payload.data?.options || []).map(option => [option.name, option.value]));
+  const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+  const [panel, category, archive] = await Promise.all([
+    guild.channels.fetch(options.panel),
+    guild.channels.fetch(options.kategorie),
+    options.archiv ? guild.channels.fetch(options.archiv) : Promise.resolve(null)
+  ]);
+  return configureTickets(guild, panel, category, archive, String(options.ticketarten || ""));
+}
+
+async function handleHttpFamilyApplication(payload, config) {
+  if (payload.guild_id !== config.guildId || !discordGatewayClient?.isReady()) {
+    throw new Error("Dieser Befehl kann nur auf dem konfigurierten Discord-Server verwendet werden.");
+  }
+  const familyName = String(payload.data?.options?.find(option => option.name === "familie")?.value || "").trim();
+  const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+  return requestFamilyMembership(guild, familyName, payload.member.user);
+}
+
+async function handleHttpTicketSelect(payload, config) {
+  if (payload.guild_id !== config.guildId || !discordGatewayClient?.isReady()) {
+    throw new Error("Dieses Ticket-Panel gehört nicht zum konfigurierten Server.");
+  }
+  const ticketConfig = readTicketConfiguration();
+  if (!ticketConfig
+    || payload.channel_id !== ticketConfig.panelChannelId
+    || payload.message?.id !== ticketConfig.panelMessageId) {
+    throw new Error("Dieses Ticket-Panel ist nicht mehr aktuell.");
+  }
+  const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+  const channel = await createTicketChannel(guild, payload.member.user.id, payload.data?.values?.[0]);
+  return `Dein Ticket wurde erstellt: <#${channel.id}>.`;
+}
+async function renameFamily(guild, oldName, newName, actorId) {
+  const oldSlug = familySlug(oldName);
+  const newSlug = familySlug(newName);
+  if (!oldSlug || !newSlug) throw new Error("Bitte gib gültige alte und neue Familiennamen an.");
+  if (newName.length > 100) throw new Error("Der neue Familienname darf höchstens 100 Zeichen lang sein.");
+
+  const { channel, role } = await findFamilyResources(guild, oldName);
+  if (!channel || !role) {
+    throw new Error("Zum Umbenennen müssen sowohl Familienkanal als auch Familienrolle vorhanden sein.");
+  }
+  if (oldSlug === newSlug && role.name.toLowerCase() === newName.toLowerCase()) {
+    return `Die Familie heißt bereits **${newName}**.`;
+  }
+
+  const [channels, roles] = await Promise.all([
+    guild.channels.fetch(),
+    guild.roles.fetch()
+  ]);
+  if (channels.some(candidate =>
+    candidate?.type === ChannelType.GuildText
+    && candidate.parentId === channel.parentId
+    && candidate.id !== channel.id
+    && candidate.name === newSlug
+  )) {
+    throw new Error(`Im Familienbereich existiert bereits ein Kanal mit dem Namen „${newSlug}“.`);
+  }
+  if (roles.some(candidate =>
+    candidate.id !== role.id
+    && candidate.name.toLowerCase() === newName.toLowerCase()
+  )) {
+    throw new Error(`Es existiert bereits eine Rolle mit dem Namen „${newName}“.`);
+  }
+
+  const botMember = await guild.members.fetchMe();
+  const missingPermissions = [
+    !botMember.permissions.has(PermissionFlagsBits.ManageChannels) && "Kanäle verwalten",
+    !botMember.permissions.has(PermissionFlagsBits.ManageRoles) && "Rollen verwalten"
+  ].filter(Boolean);
+  if (missingPermissions.length) {
+    throw new Error(`Dem Bot fehlen die Serverberechtigungen: ${missingPermissions.join(" und ")}.`);
+  }
+
+  await role.setName(newName, `Familie durch Admin ${actorId} umbenannt`);
+  try {
+    await channel.setName(newSlug, `Familie durch Admin ${actorId} umbenannt`);
+  } catch (error) {
+    try {
+      await role.setName(oldName, `Kanalumbenennung für Familie durch Admin ${actorId} zurückgerollt`);
+    } catch (rollbackError) {
+      throw new Error(`Die Rolle wurde umbenannt, aber der Kanal nicht; auch das Zurücksetzen der Rolle schlug fehl: ${rollbackError.message}`);
+    }
+    throw new Error(`Der Kanal konnte nicht umbenannt werden; die Rolle wurde zurückgesetzt: ${error.message}`);
+  }
+  await logFamilyAudit("Familie umbenannt", newName, actorId, `Vorher: ${oldName} · Kanal: <#${channel.id}> · Rolle: <@&${role.id}>`);
+  return `Familie **${oldName}** wurde in **${newName}** umbenannt.`;
+}
+
+async function getFamilyInfo(guild, familyName) {
+  if (!familySlug(familyName)) throw new Error("Bitte gib einen gültigen Familiennamen ein.");
+  const entries = await familyEntries(guild, true);
+  const channelName = familySlug(familyName);
+  const matchingEntries = entries.filter(entry =>
+    entry.channel.name === channelName
+    || entry.role?.name.toLowerCase() === familyName.toLowerCase()
+  );
+  if (matchingEntries.length > 1) {
+    throw new Error("Es wurden mehrere passende Familien gefunden. Bitte bereinige die doppelten Ressourcen zuerst.");
+  }
+  const entry = matchingEntries[0];
+  if (!entry) throw new Error(`Die Familie „${familyName}“ wurde nicht gefunden.`);
+
+  const name = familyNameFromEntry(entry);
+  const members = entry.role
+    ? [...entry.role.members.values()]
+      .map(member => member.displayName.replace(/[`*_~|]/g, ""))
+      .sort((left, right) => left.localeCompare(right, "de"))
+    : [];
+  const memberList = entry.role
+    ? (members.length ? members.slice(0, 20).join(", ") : "Keine Mitglieder")
+    : "Die Familienrolle wurde nicht gefunden.";
+  const omittedMembers = members.length > 20 ? `\nWeitere Mitglieder: ${members.length - 20}` : "";
+  return `**Familie ${name}**\nKanal: <#${entry.channel.id}>\nRolle: ${entry.role ? `<@&${entry.role.id}>` : "Nicht gefunden"}\nMitglieder: ${entry.role?.members.size ?? 0}\nMitgliederliste: ${memberList}${omittedMembers}`;
+}
+
+async function prepareFamilyMemberChange(guild, familyName, userId, add, adminId, adminName) {
+  if (!familySlug(familyName)) throw new Error("Bitte gib einen gültigen Familiennamen ein.");
+  if (!/^\d{17,20}$/.test(userId)) throw new Error("Bitte gib ein gültiges Discord-Mitglied an.");
+
+  const entries = await familyEntries(guild);
+  const channelName = familySlug(familyName);
+  const matchingEntries = entries.filter(entry =>
+    entry.channel.name === channelName
+    || entry.role?.name.toLowerCase() === familyName.toLowerCase()
+  );
+  if (matchingEntries.length > 1) {
+    throw new Error("Es wurden mehrere passende Familien gefunden. Bitte bereinige die doppelten Ressourcen zuerst.");
+  }
+  const entry = matchingEntries[0];
+  if (!entry) throw new Error(`Die Familie „${familyName}“ wurde nicht gefunden.`);
+  if (!entry.role) throw new Error(`Für Familie „${familyName}“ wurde keine passende Rolle gefunden.`);
+
+  const botMember = await guild.members.fetchMe();
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    throw new Error("Dem Bot fehlt die Serverberechtigung „Rollen verwalten“.");
+  }
+  const member = await guild.members.fetch(userId);
+  const hasRole = member.roles.cache.has(entry.role.id);
+  if (add && hasRole) throw new Error(`${member.user.tag} hat die Familienrolle bereits.`);
+  if (!add && !hasRole) throw new Error(`${member.user.tag} hat die Familienrolle nicht.`);
+
+  for (const [token, pending] of pendingFamilyMemberChanges) {
+    if (pending.expiresAt <= Date.now()) pendingFamilyMemberChanges.delete(token);
+  }
+  const token = crypto.randomUUID();
+  const confirmation = {
+    token,
+    guildId: guild.id,
+    adminId,
+    adminName,
+    familyName,
+    roleId: entry.role.id,
+    memberId: member.id,
+    memberName: member.user.tag,
+    add,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    processing: false
+  };
+  pendingFamilyMemberChanges.set(token, confirmation);
+  return confirmation;
+}
+
+function familyMemberChangePrompt(confirmation) {
+  const action = confirmation.add ? "hinzufügen" : "entfernen";
+  return `**Familienrolle ändern?**\nSoll **${confirmation.memberName}** zur Familie **${confirmation.familyName}** ${action} werden?`;
+}
+
+function familyMemberChangeButtons(token) {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`famchange:confirm:${token}`)
+      .setLabel("Bestätigen")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`famchange:cancel:${token}`)
+      .setLabel("Abbrechen")
+      .setStyle(ButtonStyle.Secondary)
+  )];
+}
+
+async function completeFamilyMemberChange(token, action, guildId, adminId, guild) {
+  const confirmation = pendingFamilyMemberChanges.get(token);
+  if (!confirmation || confirmation.expiresAt <= Date.now()) {
+    pendingFamilyMemberChanges.delete(token);
+    throw new Error("Diese Bestätigung ist abgelaufen. Bitte starte den Familienbefehl erneut.");
+  }
+  if (confirmation.guildId !== guildId || confirmation.adminId !== adminId) {
+    throw new Error("Diese Bestätigung gehört einer anderen Person oder einem anderen Server.");
+  }
+  if (confirmation.processing) throw new Error("Diese Änderung wird bereits verarbeitet.");
+  confirmation.processing = true;
+  try {
+    if (action === "cancel") return "Familienänderung abgebrochen. Es wurde nichts geändert.";
+    const entries = await familyEntries(guild);
+    const family = entries.find(entry =>
+      entry.channel.name === familySlug(confirmation.familyName)
+      || entry.role?.name.toLowerCase() === confirmation.familyName.toLowerCase()
+    );
+    if (!family?.role || family.role.id !== confirmation.roleId) {
+      throw new Error("Die Familienrolle hat sich seit der Bestätigung geändert. Bitte starte den Befehl erneut.");
+    }
+    const botMember = await guild.members.fetchMe();
+    if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+      throw new Error("Dem Bot fehlt die Serverberechtigung „Rollen verwalten“.");
+    }
+    const member = await guild.members.fetch(confirmation.memberId);
+    const hasRole = member.roles.cache.has(confirmation.roleId);
+    if (confirmation.add && hasRole) throw new Error(`${member.user.tag} hat die Familienrolle inzwischen erhalten.`);
+    if (!confirmation.add && !hasRole) throw new Error(`${member.user.tag} hat die Familienrolle inzwischen nicht mehr.`);
+
+    if (confirmation.add) {
+      await member.roles.add(family.role, `Mitglied durch /famadd zur Familie ${confirmation.familyName} hinzugefügt`);
+    } else {
+      await member.roles.remove(family.role, `Mitglied durch /famremove aus der Familie ${confirmation.familyName} entfernt`);
+    }
+    const actionLabel = confirmation.add ? "Mitglied hinzugefügt" : "Mitglied entfernt";
+    await logFamilyAudit(actionLabel, confirmation.familyName, adminId, `Mitglied: ${member.user.tag} (${member.id})`);
+    return confirmation.add
+      ? `${member.user.tag} wurde zur Familie **${confirmation.familyName}** hinzugefügt.`
+      : `${member.user.tag} wurde aus der Familie **${confirmation.familyName}** entfernt.`;
+  } finally {
+    pendingFamilyMemberChanges.delete(token);
+  }
 }
 
 async function createFamily(guild, userId, familyName) {
@@ -1644,6 +2844,7 @@ async function createFamily(guild, userId, familyName) {
     throw error;
   }
 
+  await logFamilyAudit("Familie erstellt", familyName, userId, `Kanal: <#${createdChannel.id}> · Rolle: <@&${createdRole.id}>`);
   return { channelId: createdChannel.id, roleId: createdRole.id };
 }
 
@@ -1654,7 +2855,7 @@ function familyDeletedMessage(familyName, result) {
   return `Familie **${familyName}** wurde gelöscht (${deleted.join(" und ")}).`;
 }
 
-async function deleteFamily(guild, familyName) {
+async function findFamilyResources(guild, familyName) {
   const channelName = familySlug(familyName);
   const [channels, roles] = await Promise.all([
     guild.channels.fetch(),
@@ -1699,15 +2900,81 @@ async function deleteFamily(guild, familyName) {
     throw new Error(`Dem Bot fehlen die Serverberechtigungen: ${missingPermissions.join(" und ")}.`);
   }
 
+  return { channel, role };
+}
+
+function familyDeletionPrompt(familyName, confirmation) {
+  const resources = [
+    confirmation.channelId ? `Kanal <#${confirmation.channelId}>` : "kein Familienkanal gefunden",
+    confirmation.roleId ? `Rolle <@&${confirmation.roleId}>` : "keine Familienrolle gefunden"
+  ];
+  return `**Familie ${familyName} wirklich löschen?**\nDabei werden ${resources.join(" und ")} gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.`;
+}
+
+function familyDeletionButtons(token) {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`delfam:confirm:${token}`)
+      .setLabel("Familie löschen")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`delfam:cancel:${token}`)
+      .setLabel("Abbrechen")
+      .setStyle(ButtonStyle.Secondary)
+  )];
+}
+
+async function prepareFamilyDeletion(guild, familyName, userId) {
+  const { channel, role } = await findFamilyResources(guild, familyName);
+  for (const [token, pending] of pendingFamilyDeletions) {
+    if (pending.expiresAt <= Date.now()) pendingFamilyDeletions.delete(token);
+  }
+  const token = crypto.randomUUID();
+  const confirmation = {
+    token,
+    guildId: guild.id,
+    userId,
+    familyName,
+    channelId: channel?.id || null,
+    roleId: role?.id || null,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    processing: false
+  };
+  pendingFamilyDeletions.set(token, confirmation);
+  return confirmation;
+}
+
+function claimFamilyDeletion(token, guildId, userId) {
+  const confirmation = pendingFamilyDeletions.get(token);
+  if (!confirmation || confirmation.expiresAt <= Date.now()) {
+    pendingFamilyDeletions.delete(token);
+    throw new Error("Diese Bestätigung ist abgelaufen. Bitte starte `/delfam` erneut.");
+  }
+  if (confirmation.guildId !== guildId || confirmation.userId !== userId) {
+    throw new Error("Diese Bestätigung gehört einer anderen Person oder einem anderen Server.");
+  }
+  if (confirmation.processing) {
+    throw new Error("Diese Familienlöschung wird bereits verarbeitet.");
+  }
+  confirmation.processing = true;
+  return confirmation;
+}
+
+async function deleteFamily(guild, confirmation) {
+  const { channel, role } = await findFamilyResources(guild, confirmation.familyName);
+  if ((channel?.id || null) !== confirmation.channelId || (role?.id || null) !== confirmation.roleId) {
+    throw new Error("Die Familienressourcen haben sich seit der Bestätigung geändert. Bitte starte `/delfam` erneut.");
+  }
+
   let channelDeleted = false;
   if (channel) {
-    await channel.delete(`Familie ${familyName} durch /delfam gelöscht`);
+    await channel.delete(`Familie ${confirmation.familyName} durch /delfam gelöscht`);
     channelDeleted = true;
   }
   let roleDeleted = false;
   if (role) {
     try {
-      await role.delete(`Familie ${familyName} durch /delfam gelöscht`);
+      await role.delete(`Familie ${confirmation.familyName} durch /delfam gelöscht`);
       roleDeleted = true;
     } catch (error) {
       if (channelDeleted) {
@@ -1717,6 +2984,97 @@ async function deleteFamily(guild, familyName) {
     }
   }
   return { channelDeleted, roleDeleted };
+}
+
+async function completeFamilyDeletion(token, action, guildId, userId, guild) {
+  const confirmation = claimFamilyDeletion(token, guildId, userId);
+  try {
+    if (action === "cancel") return "Familienlöschung abgebrochen. Es wurde nichts gelöscht.";
+    const result = await deleteFamily(guild, confirmation);
+    await logFamilyAudit("Familie gelöscht", confirmation.familyName, userId, `Kanal-ID: ${confirmation.channelId || "nicht vorhanden"} · Rollen-ID: ${confirmation.roleId || "nicht vorhanden"}`);
+    return familyDeletedMessage(confirmation.familyName, result);
+  } finally {
+    pendingFamilyDeletions.delete(token);
+  }
+}
+
+async function handleDeleteFamilyButtonInteraction(interaction) {
+  const config = discordConfig();
+  const match = interaction.customId.match(/^delfam:(confirm|cancel):([a-f0-9-]{36})$/i);
+  if (!match) return;
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId
+    || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({
+      content: "Nur Server-Admins auf dem konfigurierten Discord-Server dürfen Familien löschen.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.deferUpdate();
+  try {
+    const content = await completeFamilyDeletion(
+      match[2],
+      match[1].toLowerCase(),
+      interaction.guildId,
+      interaction.user.id,
+      interaction.guild
+    );
+    await interaction.editReply({ content, components: [], allowedMentions: { parse: [] } });
+  } catch (error) {
+    console.error("Bestätigte Familienlöschung fehlgeschlagen:", error.message);
+    await interaction.editReply({
+      content: `Die Familie konnte nicht vollständig gelöscht werden: ${error.message}`,
+      components: [],
+      allowedMentions: { parse: [] }
+    });
+  }
+}
+
+async function handleFamilyManagementButtonInteraction(interaction) {
+  const memberChange = interaction.customId.match(/^famchange:(confirm|cancel):([a-f0-9-]{36})$/i);
+  const listPage = interaction.customId.match(/^famlist:(prev|next):([a-f0-9-]{36})$/i);
+  if (!memberChange && !listPage) return false;
+
+  const config = discordConfig();
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId
+    || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({
+      content: "Nur Server-Admins auf dem konfigurierten Discord-Server dürfen diese Familienaktion ausführen.",
+      ephemeral: true
+    });
+    return true;
+  }
+
+  await interaction.deferUpdate();
+  try {
+    if (memberChange) {
+      const content = await completeFamilyMemberChange(
+        memberChange[2],
+        memberChange[1].toLowerCase(),
+        interaction.guildId,
+        interaction.user.id,
+        interaction.guild
+      );
+      await interaction.editReply({ content, components: [], allowedMentions: { parse: [] } });
+    } else {
+      const page = moveFamilyListPage(
+        listPage[2],
+        listPage[1].toLowerCase() === "next" ? 1 : -1,
+        interaction.guildId,
+        interaction.user.id
+      );
+      await interaction.editReply({ ...page, allowedMentions: { parse: [] } });
+    }
+  } catch (error) {
+    console.error("Familienaktion über Button fehlgeschlagen:", error.message);
+    await interaction.editReply({
+      content: error.message,
+      components: [],
+      allowedMentions: { parse: [] }
+    });
+  }
+  return true;
 }
 
 async function handleHttpNewFamily(payload, config) {
@@ -1741,8 +3099,67 @@ async function handleHttpDeleteFamily(payload, config) {
   if (!familySlug(familyName)) return "Bitte gib einen gültigen Familiennamen ein.";
   if (!discordGatewayClient?.isReady()) return "Der Bot ist noch nicht verbunden. Bitte in Kürze erneut versuchen.";
   const guild = await discordGatewayClient.guilds.fetch(config.guildId);
-  const result = await deleteFamily(guild, familyName);
-  return familyDeletedMessage(familyName, result);
+  const confirmation = await prepareFamilyDeletion(guild, familyName, payload.member.user.id);
+  return {
+    content: familyDeletionPrompt(familyName, confirmation),
+    components: familyDeletionButtons(confirmation.token).map(row => row.toJSON()),
+    allowed_mentions: { parse: [] }
+  };
+}
+
+async function handleHttpFamilyManagement(payload, config) {
+  const isAdmin = (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n;
+  if (payload.guild_id !== config.guildId || !isAdmin) {
+    return "Nur Server-Admins auf dem konfigurierten Discord-Server dürfen Familien verwalten.";
+  }
+  if (!discordGatewayClient?.isReady()) return "Der Bot ist noch nicht verbunden. Bitte in Kürze erneut versuchen.";
+  const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+  const commandName = payload.data?.name;
+  const options = Object.fromEntries((payload.data?.options || []).map(option => [option.name, option.value]));
+  const userId = payload.member.user.id;
+  if (commandName === "listfam") return prepareFamilyList(guild, userId);
+  if (commandName === "famcheck") return checkFamilies(guild);
+  if (commandName === "famuebersicht") return getFamilyOverview(guild);
+  if (commandName === "famrolle") return getFamilyRolesPage(guild, Number(options.seite || 1));
+  if (commandName === "famfarbe") {
+    return setFamilyColor(guild, String(options.familie || "").trim(), String(options.farbe || ""), userId);
+  }
+  if (commandName === "famtopic") {
+    return setFamilyTopic(guild, String(options.familie || "").trim(), String(options.thema || ""), userId);
+  }
+  if (commandName === "famaktivitaet") {
+    return getFamilyActivity(guild, String(options.familie || "").trim());
+  }
+  if (commandName === "famaudit") {
+    return getFamilyAudit(String(options.suche || ""), Number(options.anzahl || 10));
+  }
+  if (commandName === "famexport") {
+    const exported = await exportFamilies(guild, String(options.format || "json"));
+    return {
+      content: "Familienressourcen wurden exportiert.",
+      files: [{ filename: exported.filename, contentType: exported.contentType, buffer: exported.buffer }]
+    };
+  }
+  if (commandName === "faminfo") return getFamilyInfo(guild, String(options.name || "").trim());
+  if (commandName === "famrename") {
+    return renameFamily(guild, String(options.alt || "").trim(), String(options.neu || "").trim(), userId);
+  }
+  if (commandName === "famadd" || commandName === "famremove") {
+    const confirmation = await prepareFamilyMemberChange(
+      guild,
+      String(options.familie || "").trim(),
+      String(options.mitglied || ""),
+      commandName === "famadd",
+      userId,
+      actorNameFromMember(payload.member)
+    );
+    return {
+      content: familyMemberChangePrompt(confirmation),
+      components: familyMemberChangeButtons(confirmation.token).map(row => row.toJSON()),
+      allowed_mentions: { parse: [] }
+    };
+  }
+  throw new Error("Unbekannter Familienbefehl.");
 }
 
 function addManualAccountingEntry(guildId, roleIds, kind, amount, description, bookedBy, sourceId) {
@@ -2009,6 +3426,198 @@ async function registerNewFamilyCommand(client, guildId) {
         .setMaxLength(100)
     )
     .toJSON();
+  const listFamiliesCommand = new SlashCommandBuilder()
+    .setName("listfam")
+    .setDescription("Zeigt alle eingerichteten Familien mit Kanal, Rolle und Mitgliederzahl.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .toJSON();
+  const checkFamiliesCommand = new SlashCommandBuilder()
+    .setName("famcheck")
+    .setDescription("Sucht mögliche verwaiste Familienkanäle und -rollen.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .toJSON();
+  const familyInfoCommand = new SlashCommandBuilder()
+    .setName("faminfo")
+    .setDescription("Zeigt Kanal, Rolle und Mitglieder einer Familie.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("name")
+      .setDescription("Name der Familie")
+      .setRequired(true)
+      .setMaxLength(100))
+    .toJSON();
+  const familyAddMemberCommand = new SlashCommandBuilder()
+    .setName("famadd")
+    .setDescription("Fügt ein Mitglied einer Familie hinzu.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("familie")
+      .setDescription("Name der Familie")
+      .setRequired(true)
+      .setMaxLength(100))
+    .addUserOption(option => option
+      .setName("mitglied")
+      .setDescription("Hinzuzufügendes Mitglied")
+      .setRequired(true))
+    .toJSON();
+  const familyRemoveMemberCommand = new SlashCommandBuilder()
+    .setName("famremove")
+    .setDescription("Entfernt ein Mitglied aus einer Familie.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("familie")
+      .setDescription("Name der Familie")
+      .setRequired(true)
+      .setMaxLength(100))
+    .addUserOption(option => option
+      .setName("mitglied")
+      .setDescription("Zu entfernendes Mitglied")
+      .setRequired(true))
+    .toJSON();
+  const familyRenameCommand = new SlashCommandBuilder()
+    .setName("famrename")
+    .setDescription("Benennt eine Familie samt Kanal und Rolle um.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("alt")
+      .setDescription("Bisheriger Familienname")
+      .setRequired(true)
+      .setMaxLength(100))
+    .addStringOption(option => option
+      .setName("neu")
+      .setDescription("Neuer Familienname")
+      .setRequired(true)
+      .setMaxLength(100))
+    .toJSON();
+  const familyRolesCommand = new SlashCommandBuilder()
+    .setName("famrolle")
+    .setDescription("Zeigt Familienrollen und deren Mitglieder an.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addIntegerOption(option => option
+      .setName("seite")
+      .setDescription("Seitennummer (5 Familien pro Seite)")
+      .setMinValue(1))
+    .toJSON();
+  const familyOverviewCommand = new SlashCommandBuilder()
+    .setName("famuebersicht")
+    .setDescription("Zeigt Statistiken zu Familien, Mitgliedern und leeren Familien.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .toJSON();
+  const familyApplicationCommand = new SlashCommandBuilder()
+    .setName("fambeitritt")
+    .setDescription("Beantragt die Aufnahme in eine Familie.")
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("familie")
+      .setDescription("Name der gewünschten Familie")
+      .setRequired(true)
+      .setMaxLength(100))
+    .toJSON();
+  const familyColorCommand = new SlashCommandBuilder()
+    .setName("famfarbe")
+    .setDescription("Ändert die Farbe der Familienrolle.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("familie")
+      .setDescription("Name der Familie")
+      .setRequired(true)
+      .setMaxLength(100))
+    .addStringOption(option => option
+      .setName("farbe")
+      .setDescription("HEX-Farbwert, z. B. #3366ff")
+      .setRequired(true)
+      .setMinLength(6)
+      .setMaxLength(7))
+    .toJSON();
+  const familyTopicCommand = new SlashCommandBuilder()
+    .setName("famtopic")
+    .setDescription("Setzt oder leert das Thema eines Familienkanals.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("familie")
+      .setDescription("Name der Familie")
+      .setRequired(true)
+      .setMaxLength(100))
+    .addStringOption(option => option
+      .setName("thema")
+      .setDescription("Neues Kanalthema (leer zum Entfernen)")
+      .setMaxLength(1024))
+    .toJSON();
+  const familyActivityCommand = new SlashCommandBuilder()
+    .setName("famaktivitaet")
+    .setDescription("Zeigt den Zeitpunkt der letzten Nachricht ohne deren Inhalt.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("familie")
+      .setDescription("Name der Familie")
+      .setRequired(true)
+      .setMaxLength(100))
+    .toJSON();
+  const familyExportCommand = new SlashCommandBuilder()
+    .setName("famexport")
+    .setDescription("Exportiert Familienkanäle, Rollen und Mitglieder.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("format")
+      .setDescription("Dateiformat für den Export")
+      .setRequired(true)
+      .addChoices(
+        { name: "JSON", value: "json" },
+        { name: "CSV", value: "csv" }
+      ))
+    .toJSON();
+  const familyAuditCommand = new SlashCommandBuilder()
+    .setName("famaudit")
+    .setDescription("Durchsucht das Familien-Audit nach Aktion, Familie oder Admin-ID.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("suche")
+      .setDescription("Optionaler Suchbegriff")
+      .setMaxLength(100))
+    .addIntegerOption(option => option
+      .setName("anzahl")
+      .setDescription("Maximale Trefferzahl")
+      .setMinValue(1)
+      .setMaxValue(20))
+    .toJSON();
+  const ticketSetupCommand = new SlashCommandBuilder()
+    .setName("ticketeinrichten")
+    .setDescription("Richtet ein privates Ticketsystem mit konfigurierbaren Arten ein.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addChannelOption(option => option
+      .setName("panel")
+      .setDescription("Textkanal für das Ticket-Auswahlpanel")
+      .addChannelTypes(ChannelType.GuildText)
+      .setRequired(true))
+    .addChannelOption(option => option
+      .setName("kategorie")
+      .setDescription("Kategorie für offene Tickets")
+      .addChannelTypes(ChannelType.GuildCategory)
+      .setRequired(true))
+    .addChannelOption(option => option
+      .setName("archiv")
+      .setDescription("Optionale Kategorie für geschlossene Tickets")
+      .addChannelTypes(ChannelType.GuildCategory))
+    .addStringOption(option => option
+      .setName("ticketarten")
+      .setDescription("Kommagetrennte Arten, z. B. Support, Bewerbung, Sonstiges")
+      .setRequired(true)
+      .setMaxLength(1000))
+    .toJSON();
   const commands = await client.application.commands.fetch({ guildId });
   const manualBookingCommand = new SlashCommandBuilder()
     .setName("buchung")
@@ -2093,7 +3702,30 @@ async function registerNewFamilyCommand(client, guildId) {
     .setDMPermission(false)
     .toJSON();
 
-  for (const command of [familyCommand, deleteFamilyCommand, manualBookingCommand, cashCommand, voidCommand, livenessCommand, healthCommand]) {
+  for (const command of [
+    familyCommand,
+    deleteFamilyCommand,
+    listFamiliesCommand,
+    checkFamiliesCommand,
+    familyInfoCommand,
+    familyAddMemberCommand,
+    familyRemoveMemberCommand,
+    familyRenameCommand,
+    familyRolesCommand,
+    familyOverviewCommand,
+    familyApplicationCommand,
+    familyColorCommand,
+    familyTopicCommand,
+    familyActivityCommand,
+    familyExportCommand,
+    familyAuditCommand,
+    ticketSetupCommand,
+    manualBookingCommand,
+    cashCommand,
+    voidCommand,
+    livenessCommand,
+    healthCommand
+  ]) {
     const existingCommand = commands.find(existing => existing.name === command.name);
     if (existingCommand) {
       await existingCommand.edit(command);
@@ -2147,12 +3779,156 @@ async function handleDiscordInteraction(req, res) {
     config.publicKey
   );
 
+  if (payload.type === 3 && payload.data?.component_type === 3) {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void (async () => {
+      if (!config.publicKey || !await verifyRequest()) {
+        console.error("Discord-Auswahlmenü mit ungültiger Signatur oder fehlendem Public Key verworfen.");
+        return;
+      }
+      try {
+        const content = await handleHttpTicketSelect(payload, config);
+        await editOriginalInteraction(payload, {
+          content,
+          flags: 64,
+          allowed_mentions: { parse: [] }
+        });
+      } catch (error) {
+        await editOriginalInteraction(payload, {
+          content: error.message,
+          flags: 64,
+          allowed_mentions: { parse: [] }
+        });
+      }
+    })().catch(error => console.error("Discord-Ticketauswahl fehlgeschlagen:", error.message));
+    return;
+  }
+
   if (payload.type === 3 && payload.data?.component_type === 2) {
     const action = parseButtonAction(payload.data.custom_id);
     sendJson(res, 200, { type: 6 });
     void (async () => {
       if (!config.publicKey || !await verifyRequest()) {
         console.error("Discord-Button-Interaction mit ungültiger Signatur oder fehlendem Public Key verworfen.");
+        return;
+      }
+
+      const familyDeletionButton = String(payload.data.custom_id || "").match(/^delfam:(confirm|cancel):([a-f0-9-]{36})$/i);
+      if (familyDeletionButton) {
+        const isAdmin = (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n;
+        if (payload.guild_id !== config.guildId || !isAdmin) {
+          await editOriginalInteraction(payload, {
+            content: "Nur Server-Admins auf dem konfigurierten Discord-Server dürfen Familien löschen.",
+            components: [],
+            allowed_mentions: { parse: [] }
+          });
+          return;
+        }
+        try {
+          const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+          const content = await completeFamilyDeletion(
+            familyDeletionButton[2],
+            familyDeletionButton[1].toLowerCase(),
+            payload.guild_id,
+            payload.member.user.id,
+            guild
+          );
+          await editOriginalInteraction(payload, { content, components: [], allowed_mentions: { parse: [] } });
+        } catch (error) {
+          console.error("Bestätigte Familienlöschung fehlgeschlagen:", error.message);
+          await editOriginalInteraction(payload, {
+            content: `Die Familie konnte nicht vollständig gelöscht werden: ${error.message}`,
+            components: [],
+            allowed_mentions: { parse: [] }
+          });
+        }
+        return;
+      }
+
+      const familyChangeButton = String(payload.data.custom_id || "").match(/^famchange:(confirm|cancel):([a-f0-9-]{36})$/i);
+      const familyListButton = String(payload.data.custom_id || "").match(/^famlist:(prev|next):([a-f0-9-]{36})$/i);
+      if (familyChangeButton || familyListButton) {
+        const isAdmin = (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n;
+        if (payload.guild_id !== config.guildId || !isAdmin) {
+          await followupInteraction(payload, "Nur Server-Admins auf dem konfigurierten Discord-Server dürfen diese Familienaktion ausführen.");
+          return;
+        }
+        try {
+          let result;
+          if (familyChangeButton) {
+            const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+            result = {
+              content: await completeFamilyMemberChange(
+                familyChangeButton[2],
+                familyChangeButton[1].toLowerCase(),
+                payload.guild_id,
+                payload.member.user.id,
+                guild
+              ),
+              components: [],
+              allowed_mentions: { parse: [] }
+            };
+          } else {
+            result = moveFamilyListPage(
+              familyListButton[2],
+              familyListButton[1].toLowerCase() === "next" ? 1 : -1,
+              payload.guild_id,
+              payload.member.user.id
+            );
+            result = {
+              content: result.content,
+              components: result.components.map(row => row.toJSON()),
+              allowed_mentions: { parse: [] }
+            };
+          }
+          await editOriginalInteraction(payload, result);
+        } catch (error) {
+          console.error("Familienaktion über signierte Interaktion fehlgeschlagen:", error.message);
+          await editOriginalInteraction(payload, {
+            content: error.message,
+            components: [],
+            allowed_mentions: { parse: [] }
+          });
+        }
+        return;
+      }
+
+      const familyApplicationButton = String(payload.data.custom_id || "").match(/^famapply:(approve|reject):([a-f0-9-]{36})$/i);
+      if (familyApplicationButton) {
+        if (payload.guild_id !== config.guildId) {
+          await followupInteraction(payload, "Dieser Antrag gehört nicht zum konfigurierten Server.");
+          return;
+        }
+        try {
+          const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+          const content = await completeFamilyApplication(
+            familyApplicationButton[2],
+            familyApplicationButton[1].toLowerCase(),
+            payload.member.user.id,
+            guild
+          );
+          await editOriginalInteraction(payload, { content, components: [], allowed_mentions: { parse: [] } });
+        } catch (error) {
+          await followupInteraction(payload, error.message);
+        }
+        return;
+      }
+
+      if (payload.data.custom_id === "ticket:close") {
+        try {
+          if (payload.guild_id !== config.guildId || !discordGatewayClient?.isReady()) {
+            throw new Error("Dieses Ticket gehört nicht zum konfigurierten Server.");
+          }
+          const guild = await discordGatewayClient.guilds.fetch(config.guildId);
+          const [channel, actor] = await Promise.all([
+            guild.channels.fetch(payload.channel_id),
+            guild.members.fetch(payload.member.user.id)
+          ]);
+          const content = await closeTicketChannel(channel, actor, guild);
+          await editOriginalInteraction(payload, { content, components: [], allowed_mentions: { parse: [] } });
+        } catch (error) {
+          await followupInteraction(payload, error.message);
+        }
         return;
       }
 
@@ -2209,8 +3985,48 @@ async function handleDiscordInteraction(req, res) {
         console.error("Discord-Slash-Command fehlgeschlagen:", error.message);
         return `Die Familie konnte nicht vollständig gelöscht werden: ${error.message}`;
       })
-      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
+      .then(result => editOriginalInteraction(
+        payload,
+        typeof result === "string" ? { content: result, allowed_mentions: { parse: [] } } : result
+      ))
       .catch(error => console.error("Discord-Antwort auf /delfam fehlgeschlagen:", error.message));
+    return;
+  }
+
+  if (payload.type === 2 && payload.data?.name === "fambeitritt") {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void handleHttpFamilyApplication(payload, config)
+      .catch(error => `Familienbeitritt fehlgeschlagen: ${error.message}`)
+      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
+      .catch(error => console.error("Discord-Antwort auf /fambeitritt fehlgeschlagen:", error.message));
+    return;
+  }
+
+  if (payload.type === 2 && payload.data?.name === "ticketeinrichten") {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void handleHttpTicketSetup(payload, config)
+      .catch(error => `Ticket-System konnte nicht eingerichtet werden: ${error.message}`)
+      .then(content => editOriginalInteraction(payload, { content, allowed_mentions: { parse: [] } }))
+      .catch(error => console.error("Discord-Antwort auf /ticketeinrichten fehlgeschlagen:", error.message));
+    return;
+  }
+
+  const familyManagementCommands = [
+    "listfam", "famcheck", "faminfo", "famadd", "famremove", "famrename", "famrolle",
+    "famuebersicht", "famfarbe", "famtopic", "famaktivitaet", "famexport", "famaudit"
+  ];
+  if (payload.type === 2 && familyManagementCommands.includes(payload.data?.name)) {
+    sendJson(res, 200, { type: 5, data: { flags: 64 } });
+    void handleHttpFamilyManagement(payload, config)
+      .catch(error => {
+        console.error(`Discord-Slash-Command /${payload.data.name} fehlgeschlagen:`, error.message);
+        return `/${payload.data.name} fehlgeschlagen: ${error.message}`;
+      })
+      .then(result => editOriginalInteraction(
+        payload,
+        typeof result === "string" ? { content: result, allowed_mentions: { parse: [] } } : result
+      ))
+      .catch(error => console.error(`Discord-Antwort auf /${payload.data.name} fehlgeschlagen:`, error.message));
     return;
   }
 
@@ -2296,6 +4112,15 @@ async function postToDiscordChannel(orderMessage, channelId = ORDER_CHANNEL_ID, 
 
 async function handleGatewayOrderInteraction(interaction) {
   if (!interaction.isButton()) return;
+
+  if (interaction.customId.startsWith("delfam:")) {
+    await handleDeleteFamilyButtonInteraction(interaction);
+    return;
+  }
+  if (interaction.customId.startsWith("famchange:") || interaction.customId.startsWith("famlist:")) {
+    await handleFamilyManagementButtonInteraction(interaction);
+    return;
+  }
 
   const action = parseButtonAction(interaction.customId);
   if (action.kind === "unknown") return;
@@ -3372,12 +5197,19 @@ function startDiscordWelcomeBot() {
     return;
   }
 
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent
+    ]
+  });
   discordGatewayClient = client;
   client.once(Events.ClientReady, readyClient => {
     console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
     registerNewFamilyCommand(readyClient, config.guildId).then(() => {
-      console.log("Discord-Slash-Commands /newfam, /delfam, /buchung, /kasse, /storno, /livez und /healthz sind registriert.");
+      console.log("Discord-Slash-Commands für Familienverwaltung, Ticketsystem, Buchhaltung und Status sind registriert.");
     }).catch(error => {
       console.error("Discord-Slash-Commands konnten nicht registriert werden:", error.message);
     });
@@ -3388,6 +5220,16 @@ function startDiscordWelcomeBot() {
   client.on(Events.InteractionCreate, interaction => {
     const isNewFamilyCommand = interaction.isChatInputCommand() && interaction.commandName === "newfam";
     const isDeleteFamilyCommand = interaction.isChatInputCommand() && interaction.commandName === "delfam";
+    const isFamilyManagementCommand = interaction.isChatInputCommand()
+      && [
+        "listfam", "famcheck", "faminfo", "famadd", "famremove", "famrename", "famrolle",
+        "famuebersicht", "famfarbe", "famtopic", "famaktivitaet", "famexport", "famaudit"
+      ].includes(interaction.commandName);
+    const isFamilyApplicationCommand = interaction.isChatInputCommand() && interaction.commandName === "fambeitritt";
+    const isFamilyApplicationButton = interaction.isButton() && interaction.customId.startsWith("famapply:");
+    const isTicketSetupCommand = interaction.isChatInputCommand() && interaction.commandName === "ticketeinrichten";
+    const isTicketSelect = interaction.isStringSelectMenu() && interaction.customId === "ticket:types";
+    const isTicketCloseButton = interaction.isButton() && interaction.customId === "ticket:close";
     const isManualBookingCommand = interaction.isChatInputCommand() && interaction.commandName === "buchung";
     const isCashCommand = interaction.isChatInputCommand() && interaction.commandName === "kasse";
     const isVoidCommand = interaction.isChatInputCommand() && interaction.commandName === "storno";
@@ -3397,6 +5239,18 @@ function startDiscordWelcomeBot() {
       ? handleNewFamilyInteraction(interaction)
       : isDeleteFamilyCommand
         ? handleDeleteFamilyInteraction(interaction)
+      : isFamilyApplicationCommand
+        ? handleFamilyApplicationInteraction(interaction)
+      : isFamilyApplicationButton
+        ? handleFamilyApplicationButton(interaction)
+      : isTicketSetupCommand
+        ? handleTicketSetupInteraction(interaction)
+      : isTicketSelect
+        ? handleTicketSelectInteraction(interaction)
+      : isTicketCloseButton
+        ? handleTicketCloseInteraction(interaction)
+      : isFamilyManagementCommand
+        ? handleFamilyManagementInteraction(interaction)
       : isManualBookingCommand
         ? handleManualBookingInteraction(interaction)
         : isCashCommand
@@ -3407,7 +5261,9 @@ function startDiscordWelcomeBot() {
               ? handleHealthCommandInteraction(interaction)
         : handleGatewayOrderInteraction(interaction);
     handleInteraction.catch(error => {
-      const isSlashCommand = isNewFamilyCommand || isDeleteFamilyCommand || isManualBookingCommand || isCashCommand || isVoidCommand || isLivenessCommand || isHealthCommand;
+      const isSlashCommand = isNewFamilyCommand || isDeleteFamilyCommand || isFamilyManagementCommand
+        || isFamilyApplicationCommand || isTicketSetupCommand || isManualBookingCommand || isCashCommand
+        || isVoidCommand || isLivenessCommand || isHealthCommand;
       const context = isSlashCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
       console.error(`${context}:`, error.message);
       if (interaction.isRepliable() && !interaction.replied) {
@@ -3415,6 +5271,8 @@ function startDiscordWelcomeBot() {
           ? `Die Familieneinrichtung ist fehlgeschlagen: ${error.message}`
           : isDeleteFamilyCommand
             ? `Die Familie konnte nicht vollständig gelöscht werden: ${error.message}`
+          : isFamilyManagementCommand
+            ? `Familienbefehl fehlgeschlagen: ${error.message}`
           : isManualBookingCommand
             ? `Buchung fehlgeschlagen: ${error.message}`
             : isCashCommand
