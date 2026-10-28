@@ -3608,15 +3608,15 @@ async function registerNewFamilyCommand(client, guildId) {
       .setDescription("Kategorie für offene Tickets")
       .addChannelTypes(ChannelType.GuildCategory)
       .setRequired(true))
-    .addChannelOption(option => option
-      .setName("archiv")
-      .setDescription("Optionale Kategorie für geschlossene Tickets")
-      .addChannelTypes(ChannelType.GuildCategory))
     .addStringOption(option => option
       .setName("ticketarten")
       .setDescription("Kommagetrennte Arten, z. B. Support, Bewerbung, Sonstiges")
       .setRequired(true)
       .setMaxLength(1000))
+    .addChannelOption(option => option
+      .setName("archiv")
+      .setDescription("Optionale Kategorie für geschlossene Tickets")
+      .addChannelTypes(ChannelType.GuildCategory))
     .toJSON();
   const commands = await client.application.commands.fetch({ guildId });
   const manualBookingCommand = new SlashCommandBuilder()
