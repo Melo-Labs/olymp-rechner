@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   calculateProductionRun,
+  planProduction,
   terminalProductIds
 } = require("../production-utils");
 
@@ -68,4 +69,29 @@ test("rejects cyclic or invalid production data", () => {
 
   assert.match(calculateProductionRun(cyclic, "first").error, /Endlosschleife/);
   assert.match(calculateProductionRun(products, "final", 0).error, /gültige Produktionsdaten/);
+});
+
+test("plans complete batches for a requested target quantity", () => {
+  assert.deepEqual(planProduction(products, "final", 3), {
+    cost: 60,
+    hours: 4.75,
+    chain: ["Rohprodukt", "Zwischenprodukt", "Endprodukt"],
+    missing: [],
+    cycles: 3,
+    targetQuantity: 3,
+    producedQuantity: 3
+  });
+
+  assert.deepEqual(
+    planProduction(products, "intermediate", 5),
+    {
+      cost: 60,
+      hours: 4,
+      chain: ["Rohprodukt", "Zwischenprodukt"],
+      missing: [],
+      cycles: 2,
+      targetQuantity: 5,
+      producedQuantity: 6
+    }
+  );
 });

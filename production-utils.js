@@ -60,7 +60,30 @@
     return { cost, hours, chain: [...new Set(chain)], missing: [...missing] };
   }
 
-  const api = { calculateProductionRun, terminalProductIds };
+  function planProduction(products, id, targetQuantity) {
+    const product = products[id];
+    const quantity = Number(targetQuantity);
+    if (!product || !Number.isFinite(quantity) || quantity <= 0
+      || !Number.isFinite(product.quantityPerCycle) || product.quantityPerCycle <= 0) {
+      return { error: "Bitte gib eine gültige Zielmenge ein." };
+    }
+
+    const cycles = Math.ceil(quantity / product.quantityPerCycle);
+    if (!Number.isSafeInteger(cycles) || cycles < 1) {
+      return { error: "Die benötigte Chargenzahl ist zu hoch." };
+    }
+
+    const run = calculateProductionRun(products, id, cycles);
+    if (run.error) return run;
+    return {
+      ...run,
+      cycles,
+      targetQuantity: quantity,
+      producedQuantity: cycles * product.quantityPerCycle
+    };
+  }
+
+  const api = { calculateProductionRun, planProduction, terminalProductIds };
   root.ProductionUtils = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(globalThis);

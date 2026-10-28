@@ -442,6 +442,50 @@ button { font: inherit; }
 .upgrades summary::after { content: "+"; color: var(--ac); font-size: 18px; }
 .upgrades[open] summary { margin-bottom: 14px; }
 .upgrades[open] summary::after { content: "−"; }
+.planner summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  list-style: none;
+}
+.planner summary::-webkit-details-marker { display: none; }
+.planner summary::after { content: "+"; color: var(--ac); font-size: 18px; }
+.planner[open] summary { margin-bottom: 10px; }
+.planner[open] summary::after { content: "−"; }
+.planner-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.planner-controls input {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color-scheme: dark;
+  padding: 9px 12px;
+  color: var(--tx);
+  font: 700 13px var(--body);
+}
+.planner-schedule {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-elevated);
+  font-size: 13px;
+}
+.planner-schedule span { color: var(--mut); }
+.planner-schedule strong { text-align: right; }
+.planner-note { margin: 12px 0 0; color: var(--tx-secondary); font-size: 12.5px; }
 .upgrade-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -489,6 +533,7 @@ button { font: inherit; }
   .mats { grid-template-columns: 1fr; }
   .kv { grid-template-columns: 1fr 1fr; }
   .best-box { grid-template-columns: 1fr 1fr; }
+  .planner-controls { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

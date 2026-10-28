@@ -15,9 +15,9 @@ equipment:{title:"Ausrüstung",levels:[{label:"Keine Stufe",reduction:0},{label:
 autonomy:{title:"Autonomie",levels:[{label:"Keine Stufe"},{label:"Ladung +8 Std. · Zelle 24 Std."},{label:"Ladung +16 Std. · Zelle 72 Std."},{label:"Ladung +24 Std. · Zelle 168 Std."}]},
 storage:{title:"Speicher",levels:[{label:"Keine Stufe"},{label:"25 % größer · Zelle 24 Std."},{label:"50 % größer · Zelle 72 Std."},{label:"100 % größer · Zelle 168 Std."}]}
 };
-function fresh(){const s={hrs:24,chainEnabled:false,upgrades:{equipment:0,autonomy:0,storage:0},P:{}};CATS.forEach(c=>c.items.forEach((it,i)=>{s.P[c.id+i]={price:it[1],q:it[3]??1,h:it[4]??1,m:(it[5]||[]).map(r=>({n:r[0],a:r[1],p:Number(r[2])||0}))}}));return s}
+function fresh(){const s={hrs:24,chainEnabled:false,plan:{productId:"",quantity:1,deadline:""},upgrades:{equipment:0,autonomy:0,storage:0},P:{}};CATS.forEach(c=>c.items.forEach((it,i)=>{s.P[c.id+i]={price:it[1],q:it[3]??1,h:it[4]??1,m:(it[5]||[]).map(r=>({n:r[0],a:r[1],p:Number(r[2])||0}))}}));return s}
 let S=fresh();
-try{const s=JSON.parse(localStorage.getItem(KEY)||"null");if(s&&s.P){S.hrs=s.hrs||24;if(typeof s.chainEnabled==="boolean")S.chainEnabled=s.chainEnabled;Object.assign(S.upgrades,s.upgrades||{});for(const k in s.P)if(s.P[k]&&Array.isArray(s.P[k].m))S.P[k]=s.P[k]}}catch(e){}
+try{const s=JSON.parse(localStorage.getItem(KEY)||"null");if(s&&s.P){S.hrs=s.hrs||24;if(typeof s.chainEnabled==="boolean")S.chainEnabled=s.chainEnabled;Object.assign(S.plan,s.plan||{});Object.assign(S.upgrades,s.upgrades||{});for(const k in s.P)if(s.P[k]&&Array.isArray(s.P[k].m))S.P[k]=s.P[k]}}catch(e){}
 let page="geld";try{const h=location.hash.slice(1);if(CATS.some(c=>c.id===h))page=h}catch(e){}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -73,6 +73,34 @@ return`<h2>Eigenproduktion · ${esc(category.t)}</h2>
 <div class="chain-runs">${runs.map(run=>`<article class="chain-run"><h3>${esc(run.name)}</h3><p class="chain-path">Rohstoffe → ${run.chain.map(esc).join(" → ")}</p><div class="kv"><span>Menge je Endprodukt-Charge</span><span>${fmt(run.quantity)}</span><span>Dauer der Kette</span><span>${duration(run.hours)}</span><span>Umsatz</span><span>${money(run.revenue)}</span><span>Kosten aller Produktionsstufen</span><span>${money(run.cost)}</span><span>Gewinn pro Charge</span><span class="${cls(run.profit)}">${money(run.profit)}</span></div></article>`).join("")}</div>
 ${missing.length?`<p class="chain-warning" role="status">Für ${missing.map(esc).join(", ")} ist aktuell kein Preis hinterlegt. Diese Rohstoffe werden mit 0 $ gerechnet; die Gewinnschätzung kann dadurch zu hoch sein.</p>`:""}`;
 }
+function productionPlanner(category){
+const products=productionProducts();
+const ids=productionUtils.terminalProductIds(products,category.items.map((_,index)=>category.id+index));
+if(!ids.includes(S.plan.productId))S.plan.productId=ids[0]||"";
+const plan=productionUtils.planProduction(products,S.plan.productId,S.plan.quantity);
+let schedule="";
+if(!plan.error&&S.plan.deadline){
+  const deadline=new Date(S.plan.deadline);
+  if(Number.isNaN(deadline.getTime()))schedule=`<p class="chain-warning" role="status">Bitte wähle einen gültigen Fertigstellungstermin.</p>`;
+  else{
+    const start=new Date(deadline.getTime()-plan.hours*60*60*1000);
+    const formatter=new Intl.DateTimeFormat("de-DE",{dateStyle:"medium",timeStyle:"short"});
+    schedule=`<div class="planner-schedule"><span>Spätester Start</span><strong>${formatter.format(start)}</strong><span>Fertig bis</span><strong>${formatter.format(deadline)}</strong></div>`;
+  }
+}
+const result=plan.error?`<p class="chain-warning" role="status">${esc(plan.error)}</p>`:`<div class="chain-summary">
+<div class="chain-stat"><span>Benötigte Chargen</span><strong>${fmt(plan.cycles)}</strong></div>
+<div class="chain-stat"><span>Geplante Menge</span><strong>${fmt(plan.producedQuantity)}</strong></div>
+<div class="chain-stat"><span>Gesamtdauer</span><strong>${duration(plan.hours)}</strong></div>
+<div class="chain-stat"><span>Materialkosten</span><strong>${money(plan.cost)}</strong></div>
+</div>${plan.producedQuantity>plan.targetQuantity?`<p class="planner-note">Die letzte Charge erzeugt ${fmt(plan.producedQuantity-plan.targetQuantity)} Stück zusätzlich.</p>`:""}${schedule}`;
+return`<details class="panel planner" open><summary>Produktionsplaner</summary><p class="chain-copy">Plane eine Zielmenge und optional einen Fertigstellungstermin. Die Dauer enthält alle Vorprodukte in vollständigen, nacheinander produzierten Chargen.</p>
+<div class="planner-controls">
+<label class="upgrade-control"><span>Endprodukt</span><select data-plan="productId" aria-label="Endprodukt">${ids.map(id=>`<option value="${id}" ${id===S.plan.productId?"selected":""}>${esc(products[id].name)}</option>`).join("")}</select></label>
+<label class="upgrade-control"><span>Zielmenge</span><input type="number" min="1" step="1" inputmode="numeric" data-plan="quantity" value="${esc(S.plan.quantity)}" aria-label="Zielmenge"></label>
+<label class="upgrade-control"><span>Fertig bis (optional)</span><input type="datetime-local" data-plan="deadline" value="${esc(S.plan.deadline)}" aria-label="Fertigstellungstermin"></label>
+</div>${result}</details>`;
+}
 
 function nav(){
 const g=a=>a.map(c=>`<a href="#${c.id}" data-nav="${c.id}" class="${c.id===page?"on":""}">${c.t}</a>`).join("");
@@ -116,7 +144,7 @@ for (const [idx, item] of c.items.entries()) {
   if (item[4] != null) S.P[key].h = item[4];
 }
 const upgradePanel=`<details class="panel upgrades"><summary>Labor-Upgrades</summary><div class="upgrade-grid">${Object.entries(LAB_UPGRADES).map(([key,upgrade])=>`<label class="upgrade-control"><span>${upgrade.title}</span><select data-upgrade="${key}" aria-label="${upgrade.title}">${upgrade.levels.map((level,index)=>`<option value="${index}" ${S.upgrades[key]===index?"selected":""}>${level.label}</option>`).join("")}</select></label>`).join("")}</div></details>`;
-$("view").innerHTML=upgradePanel+`<section class="panel"><div class="lbl">Verkaufspreise: Maximalpreis · Hochrechnung: ${fmt(S.hrs)} Std.</div><div class="btns"><button id="chain-toggle" class="primary chain-toggle" type="button" aria-controls="chain-forecast" aria-pressed="${S.chainEnabled}">${S.chainEnabled?"Eigenproduktion ausblenden":"Eigenproduktion berechnen"}</button></div></section>
+$("view").innerHTML=upgradePanel+productionPlanner(c)+`<section class="panel"><div class="lbl">Verkaufspreise: Maximalpreis · Hochrechnung: ${fmt(S.hrs)} Std.</div><div class="btns"><button id="chain-toggle" class="primary chain-toggle" type="button" aria-controls="chain-forecast" aria-pressed="${S.chainEnabled}">${S.chainEnabled?"Eigenproduktion ausblenden":"Eigenproduktion berechnen"}</button></div></section>
 <section class="panel chain-forecast" id="chain-forecast" ${S.chainEnabled?"":"hidden"}></section>
 <section class="panel best-box" id="best"></section><section class="cards">${c.items.map((it,i)=>card(c,it,i)).join("")}</section>`;
 calc();
@@ -160,6 +188,7 @@ save();calc();
 });
 document.addEventListener("change",e=>{
 const t=e.target;
+if(t.dataset.plan!==undefined){S.plan[t.dataset.plan]=t.dataset.plan==="quantity"?Math.max(1,Math.floor(Number(t.value)||1)):t.value;save();render();return}
 if(t.dataset.upgrade===undefined)return;
 S.upgrades[t.dataset.upgrade]=Number(t.value)||0;save();render();
 });
