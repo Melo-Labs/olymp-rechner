@@ -67,6 +67,11 @@ test("completes discounted order through signed status changes and ledger rollba
     coupons: path.join(dataDirectory, "coupons.json"),
     products: path.join(dataDirectory, "products.json"),
     audit: path.join(dataDirectory, "audit.json"),
+    familyAudit: path.join(dataDirectory, "family-audit.json"),
+    familyApplications: path.join(dataDirectory, "family-applications.json"),
+    ticketConfig: path.join(dataDirectory, "ticket-config.json"),
+    familyTreasury: path.join(dataDirectory, "family-treasury.json"),
+    auditLog: path.join(dataDirectory, "audit-log.json"),
     ledger: path.join(dataDirectory, "ledger.json"),
     reports: path.join(dataDirectory, "reports.json")
   };
@@ -82,6 +87,11 @@ test("completes discounted order through signed status changes and ledger rollba
   }]));
   fs.writeFileSync(files.products, "[]");
   fs.writeFileSync(files.audit, "[]");
+  fs.writeFileSync(files.familyAudit, "[]");
+  fs.writeFileSync(files.familyApplications, "[]");
+  fs.writeFileSync(files.ticketConfig, "[]");
+  fs.writeFileSync(files.familyTreasury, "[]");
+  fs.writeFileSync(files.auditLog, "[]");
   fs.writeFileSync(files.ledger, "[]");
   fs.writeFileSync(files.reports, JSON.stringify({
     startedOn: berlinDateKey(),
@@ -109,6 +119,11 @@ test("completes discounted order through signed status changes and ledger rollba
       SHOP_COUPONS_FILE: files.coupons,
       CATALOG_FILE: files.products,
       CATALOG_AUDIT_PENDING_FILE: files.audit,
+      FAMILY_AUDIT_FILE: files.familyAudit,
+      FAMILY_APPLICATIONS_FILE: files.familyApplications,
+      TICKET_CONFIG_FILE: files.ticketConfig,
+      FAMILY_TREASURY_FILE: files.familyTreasury,
+      AUDIT_LOG_FILE: files.auditLog,
       ACCOUNTING_LEDGER_FILE: files.ledger,
       ACCOUNTING_REPORTS_FILE: files.reports,
       LOCAL_ORDER_LOG_DIR: archiveDirectory,
@@ -162,6 +177,40 @@ test("completes discounted order through signed status changes and ledger rollba
     assert.equal(orders.length, 1);
     const orderId = orders[0].id;
     assert.equal(orders[0].totalPrice, 225);
+
+    const emptyMaterialOrderResponse = await fetch(`${baseUrl}/api/material-bestellung`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        technical: 0,
+        medical: 0,
+        icName: "Leere Bestellung",
+        phone: "555-0103"
+      })
+    });
+    assert.equal(emptyMaterialOrderResponse.status, 400);
+    assert.equal(JSON.parse(fs.readFileSync(files.orders, "utf8")).length, 1);
+
+    const unavailableProductId = "88b45e7d-005f-4f4b-8b09-6ce0f40eef88";
+    fs.writeFileSync(files.products, JSON.stringify([{
+      id: unavailableProductId,
+      name: "Nicht verfügbares Produkt",
+      price: 250,
+      active: true,
+      available: false
+    }]));
+    const unavailableProductResponse = await fetch(`${baseUrl}/api/wunsch-bestellung`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        icName: "Direktbestellung",
+        phone: "555-0104",
+        items: [{ type: "catalog", productId: unavailableProductId, quantity: 1 }]
+      })
+    });
+    assert.equal(unavailableProductResponse.status, 400);
+    assert.equal(JSON.parse(fs.readFileSync(files.orders, "utf8")).length, 1);
+
     await waitFor(() => {
       const currentOrder = JSON.parse(fs.readFileSync(files.orders, "utf8"))[0];
       return currentOrder.deliveryStatus === "local-only"

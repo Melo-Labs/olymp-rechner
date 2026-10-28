@@ -4803,6 +4803,10 @@ async function handleMaterialOrder(req, res) {
     send(res, 400, JSON.stringify({ ok: false, message: "Die Materialmenge oder der Bestellwert ist zu hoch." }), "application/json; charset=utf-8");
     return;
   }
+  if (totalMaterials < 1) {
+    send(res, 400, JSON.stringify({ ok: false, message: "Bitte mindestens ein Material bestellen." }), "application/json; charset=utf-8");
+    return;
+  }
 
   let pricing;
   try {
@@ -5033,7 +5037,7 @@ async function handleCustomOrder(req, res) {
     let name;
     let pricePerItem;
     if (type === "catalog") {
-      const product = catalog.find(item => item.id === entry?.productId && item.active);
+      const product = catalog.find(item => item.id === entry?.productId && item.active && item.available);
       if (!product) {
         send(res, 400, JSON.stringify({ ok: false, message: "Ein ausgewähltes Produkt ist nicht mehr verfügbar." }), "application/json; charset=utf-8");
         return;
@@ -5108,7 +5112,12 @@ function checkHealthStorage() {
     CATALOG_AUDIT_PENDING_FILE,
     ACCOUNTING_LEDGER_FILE,
     ACCOUNTING_REPORTS_FILE,
-    BUYBACK_PRODUCTS_FILE
+    BUYBACK_PRODUCTS_FILE,
+    FAMILY_AUDIT_FILE,
+    FAMILY_APPLICATIONS_FILE,
+    TICKET_CONFIG_FILE,
+    FAMILY_TREASURY_FILE,
+    AUDIT_LOG_FILE
   ];
   const directories = new Set([
     ...files.map(file => path.dirname(file)),
