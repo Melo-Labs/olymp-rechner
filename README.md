@@ -43,6 +43,8 @@ Produkt-Rabatte, Aktionspakete und Randwerbung werden im Quellcode gepflegt und 
 
 Weitere Discord-Befehle: `/coupon erstellen|deaktivieren|aktivieren|liste` (Katalog-Admin-Rolle, gleiche Regeln und Kanalmeldung wie im Web-Admin), `/famrang familie mitglied rang` (Admins; Rang Boss, Unterboss oder Mitglied über Rollen „<Familie> | Boss/Unterboss“ mit Kanalrechten; `/faminfo` zeigt die Ränge) und `/famkasse stand|einzahlen|auszahlen|verlauf` (Familienmitglieder zahlen ein, Auszahlungen nur Boss, Unterboss oder Admins; Meldung im Familienkanal). Die Familienkasse liegt getrennt von der Shop-Buchhaltung in `data/family-treasury.json`. In Tickets kann ein Admin über „Ticket übernehmen“ die Bearbeitung beanspruchen. Unter `/admin/audit` (Katalog-Admin-Rolle) zeigt ein Dashboard Familien-, Ticket-, Coupon-, Familienkassen- und Buchungsereignisse mit Suche und Filter; neue Ereignisse stehen in `data/audit-log.json`.
 
+Zusätzliche Werkzeug-Befehle: `/ping`, `/serverinfo`, `/userinfo`, `/famtop` (für alle); `/ticketliste`, `/ticketadd`, `/ticketremove` (Server-Admins und Ticket-Admin-Rolle, die beiden letzten nur im Ticketkanal); `/umfrage` und `/couponinfo` (Admins und Katalog-Admin-Rolle); `/famkassen`, `/ankuendigung`, `/clear`, `/slowmode`, `/sperren` und `/entsperren` (nur Server-Admins). Der Bot braucht dafür je nach Befehl „Nachrichten verwalten“, „Kanäle verwalten“ und „Reaktionen hinzufügen“.
+
 Der Login verwendet den OAuth2-Scope `identify`. Die Rollenprüfung erfolgt über den Discord-Bot, der Servermitgliedschaften lesen können muss. Die Rolle wird bei der Anmeldung und danach mindestens einmal pro Minute geprüft. Sitzungen laufen nach acht Stunden ab und werden beim Serverneustart beendet.
 
 ## Git-Push-Benachrichtigung per Discord-Webhook

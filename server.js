@@ -91,7 +91,11 @@ const pendingFamilyMemberChanges = new Map();
 const pendingFamilyListPages = new Map();
 const pendingTicketCreations = new Set();
 const pendingTicketClaims = new Set();
-const EXTENSION_COMMANDS = ["coupon", "famrang", "famkasse"];
+const EXTENSION_COMMANDS = [
+  "coupon", "famrang", "famkasse",
+  "ping", "serverinfo", "userinfo", "famtop", "famkassen", "ticketliste", "ticketadd", "ticketremove",
+  "umfrage", "ankuendigung", "clear", "slowmode", "sperren", "entsperren", "couponinfo"
+];
 let discordGatewayClient = null;
 const ROOT = __dirname;
 const LEGACY_CATALOG_FILE = path.join(ROOT, "shop-products.json");
@@ -3791,7 +3795,222 @@ async function runCouponCommand(ctx) {
   throw new Error("Unbekannter Coupon-Befehl.");
 }
 
+function safeText(value) {
+  return String(value ?? "").replace(/[`*_~|<>@]/g, "");
+}
+
+function discordTimestamp(date) {
+  return date ? `<t:${Math.floor(new Date(date).getTime() / 1000)}:D>` : "unbekannt";
+}
+
+function requireAdmin(ctx, what) {
+  if (!ctx.isAdmin) throw new Error(`Nur Server-Admins dürfen ${what}.`);
+}
+
+function requireStaff(ctx, what) {
+  if (!ctx.isAdmin && !memberCanManageOrders(ctx.guild.id, ctx.roleIds, discordConfig())) {
+    throw new Error(`Nur Admins und die Katalog-Admin-Rolle dürfen ${what}.`);
+  }
+}
+
+function requireTicketManager(ctx) {
+  const config = readTicketConfiguration();
+  if (!ctx.isAdmin && !(config && ctx.roleIds.includes(config.adminRoleId))) {
+    throw new Error("Nur Server-Admins und die Ticket-Admin-Rolle dürfen Tickets verwalten.");
+  }
+}
+
+async function fetchTextChannel(ctx, channelId) {
+  const channel = await ctx.guild.channels.fetch(channelId || ctx.channelId);
+  if (!channel || !channel.isTextBased() || channel.isThread() || channel.isVoiceBased()) {
+    throw new Error("Bitte wähle einen Textkanal.");
+  }
+  return channel;
+}
+
+async function fetchOpenTicketChannel(ctx) {
+  const channel = await ctx.guild.channels.fetch(ctx.channelId);
+  const ticket = channel ? parseTicketTopic(channel.topic) : null;
+  if (!ticket || ticket.status !== "open") throw new Error("Dieser Befehl funktioniert nur in einem offenen Ticket.");
+  return { channel, ticket };
+}
+
+const UTILITY_COMMANDS = {
+  async ping() {
+    const wsPing = discordGatewayClient?.ws?.ping;
+    const uptime = Math.floor(process.uptime());
+    const hours = Math.floor(uptime / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    return `🏓 Pong! Gateway-Latenz: **${Number.isFinite(wsPing) && wsPing >= 0 ? `${Math.round(wsPing)} ms` : "unbekannt"}** · Laufzeit: **${hours} h ${minutes} min**`;
+  },
+
+  async serverinfo(ctx) {
+    const guild = ctx.guild;
+    await guild.channels.fetch();
+    const channels = guild.channels.cache;
+    return [
+      `**${safeText(guild.name)}**`,
+      `Mitglieder: **${guild.memberCount}**`,
+      `Textkanäle: **${channels.filter(channel => channel.type === ChannelType.GuildText).size}** · Sprachkanäle: **${channels.filter(channel => channel.type === ChannelType.GuildVoice).size}**`,
+      `Rollen: **${guild.roles.cache.size - 1}**`,
+      `Boosts: **${guild.premiumSubscriptionCount || 0}** (Stufe ${guild.premiumTier})`,
+      `Erstellt: ${discordTimestamp(guild.createdAt)}`
+    ].join("\n");
+  },
+
+  async userinfo(ctx) {
+    const id = String(ctx.options.nutzer || ctx.userId);
+    const member = await ctx.guild.members.fetch(id);
+    const roles = [...member.roles.cache.values()]
+      .filter(role => role.id !== ctx.guild.id)
+      .sort((left, right) => right.position - left.position)
+      .map(role => safeText(role.name));
+    return [
+      `**${safeText(member.displayName)}** (${safeText(member.user.username)})`,
+      `ID: ${member.id}`,
+      `Account erstellt: ${discordTimestamp(member.user.createdAt)}`,
+      `Server beigetreten: ${discordTimestamp(member.joinedAt)}`,
+      `Rollen (${roles.length}): ${roles.length ? roles.slice(0, 15).join(", ") + (roles.length > 15 ? " …" : "") : "–"}`
+    ].join("\n");
+  },
+
+  async famtop(ctx) {
+    const entries = (await familyEntries(ctx.guild, true)).filter(entry => entry.role);
+    if (!entries.length) return "Es wurden keine Familien gefunden.";
+    const ranking = entries
+      .map(entry => ({ name: safeText(familyNameFromEntry(entry)), members: entry.role.members.size }))
+      .sort((left, right) => right.members - left.members || left.name.localeCompare(right.name, "de"))
+      .slice(0, 10);
+    const medals = ["🥇", "🥈", "🥉"];
+    return `**Größte Familien**\n${ranking.map((item, index) => `${medals[index] || `${index + 1}.`} ${item.name} – ${item.members} Mitglied(er)`).join("\n")}`;
+  },
+
+  async famkassen(ctx) {
+    requireAdmin(ctx, "alle Familienkassen einsehen");
+    const accounts = Object.values(familyTreasury.read()).sort((left, right) => right.balance - left.balance);
+    if (!accounts.length) return "Es gibt noch keine Familienkassen.";
+    const total = accounts.reduce((sum, account) => sum + account.balance, 0);
+    const lines = accounts.slice(0, 20).map(account => `• ${safeText(account.name)}: **${formatMoney(account.balance)}**`);
+    return `**Familienkassen (${accounts.length})**\n${lines.join("\n")}\nGesamt: **${formatMoney(total)}**`;
+  },
+
+  async ticketliste(ctx) {
+    requireTicketManager(ctx);
+    await ctx.guild.channels.fetch();
+    const tickets = [...ctx.guild.channels.cache.values()]
+      .map(channel => ({ channel, ticket: channel.topic ? parseTicketTopic(channel.topic) : null }))
+      .filter(item => item.ticket?.status === "open");
+    if (!tickets.length) return "Es sind keine Tickets offen.";
+    const lines = tickets.slice(0, 25).map(({ channel, ticket }) =>
+      `• <#${channel.id}> · ${safeText(ticket.type)} · <@${ticket.ownerId}> · ${ticket.claimedBy ? `🛠️ <@${ticket.claimedBy}>` : "⏳ unbearbeitet"}`
+    );
+    return `**Offene Tickets (${tickets.length})**\n${lines.join("\n")}`;
+  },
+
+  async ticketadd(ctx) {
+    requireTicketManager(ctx);
+    const { channel } = await fetchOpenTicketChannel(ctx);
+    const member = await ctx.guild.members.fetch(String(ctx.options.mitglied));
+    await channel.permissionOverwrites.edit(member.id, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true,
+      AttachFiles: true
+    }, { reason: `Zum Ticket hinzugefügt durch ${ctx.userId}` });
+    recordAudit({ category: "ticket", action: "Mitglied zum Ticket hinzugefügt", subject: channel.name, actorId: ctx.userId, actorName: ctx.actorName, details: `Mitglied: ${member.id}` });
+    return `<@${member.id}> wurde zum Ticket hinzugefügt.`;
+  },
+
+  async ticketremove(ctx) {
+    requireTicketManager(ctx);
+    const { channel, ticket } = await fetchOpenTicketChannel(ctx);
+    const memberId = String(ctx.options.mitglied);
+    if (memberId === ticket.ownerId) throw new Error("Der Ticket-Ersteller kann nicht entfernt werden.");
+    await channel.permissionOverwrites.delete(memberId, `Aus Ticket entfernt durch ${ctx.userId}`);
+    recordAudit({ category: "ticket", action: "Mitglied aus Ticket entfernt", subject: channel.name, actorId: ctx.userId, actorName: ctx.actorName, details: `Mitglied: ${memberId}` });
+    return `<@${memberId}> wurde aus dem Ticket entfernt.`;
+  },
+
+  async umfrage(ctx) {
+    requireStaff(ctx, "Umfragen erstellen");
+    const channel = await fetchTextChannel(ctx);
+    const answers = ["option1", "option2", "option3", "option4", "option5"]
+      .map(key => String(ctx.options[key] || "").trim())
+      .filter(Boolean);
+    if (answers.length < 2) throw new Error("Eine Umfrage braucht mindestens zwei Optionen.");
+    const emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"];
+    const message = await channel.send({
+      content: `📊 **${String(ctx.options.frage).trim()}**\n\n${answers.map((answer, index) => `${emojis[index]} ${answer}`).join("\n")}`,
+      allowedMentions: { parse: [] }
+    });
+    for (let index = 0; index < answers.length; index += 1) await message.react(emojis[index]);
+    return "Die Umfrage wurde erstellt.";
+  },
+
+  async ankuendigung(ctx) {
+    requireAdmin(ctx, "Ankündigungen senden");
+    const channel = await fetchTextChannel(ctx, String(ctx.options.kanal));
+    const text = String(ctx.options.text || "").trim();
+    if (!text) throw new Error("Bitte gib einen Text an.");
+    await channel.send({ content: `📢 ${text}`.slice(0, 2000), allowedMentions: { parse: [] } });
+    return `Die Ankündigung wurde in <#${channel.id}> gesendet.`;
+  },
+
+  async clear(ctx) {
+    requireAdmin(ctx, "Nachrichten löschen");
+    const amount = Number(ctx.options.anzahl);
+    if (!Number.isInteger(amount) || amount < 1 || amount > 100) throw new Error("Die Anzahl muss zwischen 1 und 100 liegen.");
+    const channel = await fetchTextChannel(ctx);
+    const deleted = await channel.bulkDelete(amount, true);
+    return `${deleted.size} Nachricht(en) gelöscht. Nachrichten, die älter als 14 Tage sind, kann Discord nicht in einem Schritt löschen.`;
+  },
+
+  async slowmode(ctx) {
+    requireAdmin(ctx, "den Slowmode ändern");
+    const seconds = Number(ctx.options.sekunden);
+    if (!Number.isInteger(seconds) || seconds < 0 || seconds > 21600) throw new Error("Der Slowmode muss zwischen 0 und 21600 Sekunden liegen.");
+    const channel = await fetchTextChannel(ctx, ctx.options.kanal);
+    await channel.setRateLimitPerUser(seconds, `Slowmode durch ${ctx.userId}`);
+    return seconds ? `Slowmode in <#${channel.id}> auf **${seconds} s** gesetzt.` : `Slowmode in <#${channel.id}> deaktiviert.`;
+  },
+
+  async sperren(ctx) {
+    return setChannelLock(ctx, true);
+  },
+
+  async entsperren(ctx) {
+    return setChannelLock(ctx, false);
+  },
+
+  async couponinfo(ctx) {
+    requireStaff(ctx, "Coupon-Details einsehen");
+    const code = normalizeCouponCode(ctx.options.code);
+    const coupons = readShopCoupons();
+    const coupon = coupons.find(item => item.code === code);
+    if (!coupon) throw new Error("Coupon nicht gefunden.");
+    const entry = couponWithUsage(coupon, getCouponUsageCounts(coupons).get(coupon.code) || 0);
+    return [
+      `**Coupon ${entry.code}**`,
+      `Rabatt: **${entry.percent} %** · Status: **${entry.active ? "aktiv" : "deaktiviert"}**`,
+      `Einlösungen: **${entry.uses}**${entry.maxUses === null ? " (unbegrenzt)" : ` von ${entry.maxUses} (${entry.usesRemaining} übrig)`}`,
+      `Erstellt: ${discordTimestamp(entry.createdAt)} von ${safeText(entry.createdBy)}`
+    ].join("\n");
+  }
+};
+
+async function setChannelLock(ctx, lock) {
+  requireAdmin(ctx, "Kanäle sperren oder entsperren");
+  const channel = await fetchTextChannel(ctx, ctx.options.kanal);
+  await channel.permissionOverwrites.edit(
+    ctx.guild.roles.everyone,
+    { SendMessages: lock ? false : null },
+    { reason: `${lock ? "Gesperrt" : "Entsperrt"} durch ${ctx.userId}` }
+  );
+  return lock ? `🔒 <#${channel.id}> ist für @everyone gesperrt.` : `🔓 <#${channel.id}> ist wieder freigegeben.`;
+}
+
 async function runExtensionCommand(ctx) {
+  if (UTILITY_COMMANDS[ctx.name]) return UTILITY_COMMANDS[ctx.name](ctx);
   if (ctx.name === "coupon") return runCouponCommand(ctx);
   if (ctx.name === "famkasse") return runFamilyTreasuryCommand(ctx);
   if (ctx.name === "famrang") {
@@ -3826,6 +4045,7 @@ async function handleGatewayExtensionCommand(interaction) {
       options: Object.fromEntries(list.map(option => [option.name, option.value])),
       guild: interaction.guild,
       userId: interaction.user.id,
+      channelId: interaction.channelId,
       actorName: actorNameFromMember(interaction.member),
       roleIds: interaction.member?.roles?.cache ? [...interaction.member.roles.cache.keys()] : [],
       isAdmin: Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.Administrator))
@@ -3855,6 +4075,7 @@ async function handleHttpExtensionCommand(payload, config) {
     options: Object.fromEntries(list.map(option => [option.name, option.value])),
     guild,
     userId: payload.member.user.id,
+    channelId: payload.channel_id,
     actorName: actorNameFromMember(payload.member),
     roleIds: Array.isArray(payload.member?.roles) ? payload.member.roles : [],
     isAdmin: (BigInt(payload.member?.permissions || "0") & PermissionFlagsBits.Administrator) !== 0n
@@ -3958,6 +4179,50 @@ async function registerNewFamilyCommand(client, guildId) {
       .setDescription("Zeigt die letzten Buchungen der Familienkasse.")
       .addStringOption(option => option.setName("familie").setDescription("Name der Familie").setRequired(true).setMaxLength(100)))
     .toJSON();
+  const textChannelOption = (option, description, required = false) => option
+    .setName("kanal")
+    .setDescription(description)
+    .setRequired(required)
+    .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement);
+  const utility = (name, description, adminOnly = false) => {
+    const builder = new SlashCommandBuilder().setName(name).setDescription(description).setDMPermission(false);
+    if (adminOnly) builder.setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+    return builder;
+  };
+  const utilityCommands = [
+    utility("ping", "Zeigt Latenz und Laufzeit des Bots."),
+    utility("serverinfo", "Zeigt Informationen zum Server."),
+    utility("userinfo", "Zeigt Informationen zu einem Mitglied.")
+      .addUserOption(option => option.setName("nutzer").setDescription("Mitglied (Standard: du selbst)")),
+    utility("famtop", "Zeigt die größten Familien nach Mitgliederzahl."),
+    utility("famkassen", "Zeigt alle Familienkassen (Admins).", true),
+    utility("ticketliste", "Listet alle offenen Tickets (Ticket-Admins)."),
+    utility("ticketadd", "Fügt ein Mitglied zum aktuellen Ticket hinzu (Ticket-Admins).")
+      .addUserOption(option => option.setName("mitglied").setDescription("Mitglied").setRequired(true)),
+    utility("ticketremove", "Entfernt ein Mitglied aus dem aktuellen Ticket (Ticket-Admins).")
+      .addUserOption(option => option.setName("mitglied").setDescription("Mitglied").setRequired(true)),
+    utility("umfrage", "Erstellt im aktuellen Kanal eine Umfrage (Team).")
+      .addStringOption(option => option.setName("frage").setDescription("Frage").setRequired(true).setMaxLength(200))
+      .addStringOption(option => option.setName("option1").setDescription("Option 1").setRequired(true).setMaxLength(100))
+      .addStringOption(option => option.setName("option2").setDescription("Option 2").setRequired(true).setMaxLength(100))
+      .addStringOption(option => option.setName("option3").setDescription("Option 3").setMaxLength(100))
+      .addStringOption(option => option.setName("option4").setDescription("Option 4").setMaxLength(100))
+      .addStringOption(option => option.setName("option5").setDescription("Option 5").setMaxLength(100)),
+    utility("ankuendigung", "Sendet eine Ankündigung in einen Kanal (Admins).", true)
+      .addChannelOption(option => textChannelOption(option, "Zielkanal", true))
+      .addStringOption(option => option.setName("text").setDescription("Text der Ankündigung").setRequired(true).setMaxLength(1900)),
+    utility("clear", "Löscht Nachrichten im aktuellen Kanal (Admins).", true)
+      .addIntegerOption(option => option.setName("anzahl").setDescription("Anzahl (1–100)").setRequired(true).setMinValue(1).setMaxValue(100)),
+    utility("slowmode", "Setzt den Slowmode eines Kanals (Admins).", true)
+      .addIntegerOption(option => option.setName("sekunden").setDescription("Sekunden (0 = aus)").setRequired(true).setMinValue(0).setMaxValue(21600))
+      .addChannelOption(option => textChannelOption(option, "Kanal (Standard: aktueller Kanal)")),
+    utility("sperren", "Sperrt einen Kanal für @everyone (Admins).", true)
+      .addChannelOption(option => textChannelOption(option, "Kanal (Standard: aktueller Kanal)")),
+    utility("entsperren", "Gibt einen gesperrten Kanal wieder frei (Admins).", true)
+      .addChannelOption(option => textChannelOption(option, "Kanal (Standard: aktueller Kanal)")),
+    utility("couponinfo", "Zeigt Details und Einlösungen eines Coupons (Team).")
+      .addStringOption(option => option.setName("code").setDescription("Coupon-Code").setRequired(true).setMaxLength(32))
+  ].map(builder => builder.toJSON());
   const familyCommand = new SlashCommandBuilder()
     .setName("newfam")
     .setDescription("Erstellt einen privaten Familienkanal mit passender Rolle.")
@@ -4281,6 +4546,7 @@ async function registerNewFamilyCommand(client, guildId) {
     couponCommand,
     familyRankCommand,
     familyTreasuryCommand,
+    ...utilityCommands,
     manualBookingCommand,
     cashCommand,
     voidCommand,
