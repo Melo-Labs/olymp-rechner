@@ -5399,6 +5399,11 @@ async function handleCustomOrder(req, res) {
     send(res, 400, JSON.stringify({ ok: false, message: "Bitte Kontaktdaten und 1 bis 10 gültige Positionen angeben." }), "application/json; charset=utf-8");
     return;
   }
+  let fulfillment;
+  try { fulfillment = orderFulfillment(payload); } catch (error) {
+    send(res, 400, JSON.stringify({ ok: false, message: error.message }), "application/json; charset=utf-8");
+    return;
+  }
 
   const items = [];
   let totalPrice = 0;
@@ -5468,6 +5473,7 @@ async function handleCustomOrder(req, res) {
     couponCode,
     couponPercent,
     totalPrice,
+    ...fulfillment,
     customerName: icName,
     status: "Neu",
     createdAt: new Date().toISOString(),
