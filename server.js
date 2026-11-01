@@ -4695,6 +4695,7 @@ async function registerNewFamilyCommand(client, guildId) {
     .toJSON();
 
   for (const command of [
+    lockdownCommand,
     familyCommand,
     deleteFamilyCommand,
     listFamiliesCommand,
@@ -4720,8 +4721,7 @@ async function registerNewFamilyCommand(client, guildId) {
     cashCommand,
     voidCommand,
     livenessCommand,
-    healthCommand,
-    lockdownCommand
+    healthCommand
   ]) {
     const existingCommand = commands.find(existing => existing.name === command.name);
     if (existingCommand) {
@@ -6248,7 +6248,7 @@ function startDiscordWelcomeBot() {
   client.once(Events.ClientReady, readyClient => {
     console.log(`Discord-Willkommensbot verbunden als ${readyClient.user.tag}.`);
     registerNewFamilyCommand(readyClient, config.guildId).then(() => {
-      console.log("Discord-Slash-Commands für Familienverwaltung, Ticketsystem, Buchhaltung und Status sind registriert.");
+      console.log("Discord-Slash-Commands für Lockdown, Familienverwaltung, Ticketsystem, Buchhaltung und Status sind registriert.");
     }).catch(error => {
       console.error("Discord-Slash-Commands konnten nicht registriert werden:", error.message);
     });
