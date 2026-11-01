@@ -22,6 +22,7 @@ const {
 const { CATEGORY_LABELS, createLedger, periodRange, shiftDateKey, summarize } = require("./ledger");
 const { createDataBackup } = require("./data-backups");
 const { writeJsonAtomically } = require("./json-store");
+const { activateLockdown, restoreLockdown } = require("./discord-lockdown");
 const { buildAuditFeed, createAuditLog } = require("./audit-log");
 const { createFamilyTreasury } = require("./family-treasury");
 const { FAMILY_RANKS, familyRankRoleName } = require("./family-ranks");
@@ -157,6 +158,7 @@ const SHOP_COUPONS_FILE = resolvePersistentDataFile("SHOP_COUPONS_FILE", "data/s
 const FAMILY_AUDIT_FILE = resolvePersistentDataFile("FAMILY_AUDIT_FILE", "data/family-audit.json");
 const FAMILY_APPLICATIONS_FILE = resolvePersistentDataFile("FAMILY_APPLICATIONS_FILE", "data/family-applications.json");
 const TICKET_CONFIG_FILE = resolvePersistentDataFile("TICKET_CONFIG_FILE", "data/ticket-config.json");
+const LOCKDOWN_STATE_FILE = path.join(ROOT, "data", "lockdown-state.json");
 const FAMILY_TREASURY_FILE = resolvePersistentDataFile("FAMILY_TREASURY_FILE", "data/family-treasury.json");
 const AUDIT_LOG_FILE = resolvePersistentDataFile("AUDIT_LOG_FILE", "data/audit-log.json");
 const familyTreasury = createFamilyTreasury(FAMILY_TREASURY_FILE);
@@ -779,6 +781,7 @@ function runDailyDataBackup() {
         { name: "family-audit", path: FAMILY_AUDIT_FILE },
         { name: "family-applications", path: FAMILY_APPLICATIONS_FILE },
         { name: "ticket-config", path: TICKET_CONFIG_FILE },
+        { name: "lockdown-state", path: LOCKDOWN_STATE_FILE },
         { name: "family-treasury", path: FAMILY_TREASURY_FILE },
         { name: "audit-log", path: AUDIT_LOG_FILE },
         { name: "catalog-audit-pending", path: CATALOG_AUDIT_PENDING_FILE },
@@ -3457,6 +3460,52 @@ async function handleHealthCommandInteraction(interaction) {
   await interaction.editReply({ content: healthCommandMessage("healthz") });
 }
 
+async function handleLockdownInteraction(interaction) {
+  const config = discordConfig();
+  if (!interaction.inGuild() || interaction.guildId !== config.guildId
+    || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({
+      content: "Nur Server-Admins auf dem konfigurierten Server dürfen den Lockdown steuern.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const action = interaction.options.getString("aktion", true);
+  const confirmation = interaction.options.getString("bestaetigung", true);
+  if (!["aktivieren", "aufheben"].includes(action)) {
+    await interaction.reply({ content: "Die Lockdown-Aktion ist ungültig.", ephemeral: true });
+    return;
+  }
+  const expectedConfirmation = action === "aktivieren" ? "SPERREN" : "FREIGEBEN";
+  if (confirmation !== expectedConfirmation) {
+    await interaction.reply({
+      content: `Zur Bestätigung der Aktion muss exakt ${expectedConfirmation} eingegeben werden.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    if (action === "aktivieren") {
+      const count = await activateLockdown(interaction.guild, LOCKDOWN_STATE_FILE);
+      await interaction.editReply({
+        content: `Lockdown aktiv: Schreiben in ${count} Text- und Ankündigungskanälen ist gesperrt. ` +
+          "Zum Wiederherstellen /lockdown aktion:aufheben bestaetigung:FREIGEBEN verwenden."
+      });
+      return;
+    }
+
+    const count = await restoreLockdown(interaction.guild, LOCKDOWN_STATE_FILE);
+    await interaction.editReply({
+      content: `Lockdown aufgehoben: ursprüngliche Schreibrechte in ${count} Kanälen wurden wiederhergestellt.`
+    });
+  } catch (error) {
+    await interaction.editReply({ content: `Lockdown fehlgeschlagen: ${error.message}` });
+  }
+}
+
 function correctManualAccountingEntry(guildId, roleIds, id, reason, replacement, bookedBy) {
   const config = discordConfig();
   if (!memberCanManageOrders(guildId, roleIds, config)) {
@@ -4624,6 +4673,26 @@ async function registerNewFamilyCommand(client, guildId) {
     .setDescription("Prüft Discord, Speicher und den Bestellversand.")
     .setDMPermission(false)
     .toJSON();
+  const lockdownCommand = new SlashCommandBuilder()
+    .setName("lockdown")
+    .setDescription("Sperrt das Schreiben in Textkanälen vorübergehend oder hebt die Sperre auf.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false)
+    .addStringOption(option => option
+      .setName("aktion")
+      .setDescription("Lockdown aktivieren oder ursprüngliche Berechtigungen wiederherstellen")
+      .setRequired(true)
+      .addChoices(
+        { name: "Aktivieren", value: "aktivieren" },
+        { name: "Aufheben", value: "aufheben" }
+      ))
+    .addStringOption(option => option
+      .setName("bestaetigung")
+      .setDescription("Gib SPERREN zum Aktivieren oder FREIGEBEN zum Aufheben ein.")
+      .setRequired(true)
+      .setMinLength(6)
+      .setMaxLength(20))
+    .toJSON();
 
   for (const command of [
     familyCommand,
@@ -4651,7 +4720,8 @@ async function registerNewFamilyCommand(client, guildId) {
     cashCommand,
     voidCommand,
     livenessCommand,
-    healthCommand
+    healthCommand,
+    lockdownCommand
   ]) {
     const existingCommand = commands.find(existing => existing.name === command.name);
     if (existingCommand) {
@@ -6206,6 +6276,7 @@ function startDiscordWelcomeBot() {
     const isVoidCommand = interaction.isChatInputCommand() && interaction.commandName === "storno";
     const isLivenessCommand = interaction.isChatInputCommand() && interaction.commandName === "livez";
     const isHealthCommand = interaction.isChatInputCommand() && interaction.commandName === "healthz";
+    const isLockdownCommand = interaction.isChatInputCommand() && interaction.commandName === "lockdown";
     const handleInteraction = isNewFamilyCommand
       ? handleNewFamilyInteraction(interaction)
       : isDeleteFamilyCommand
@@ -6234,11 +6305,13 @@ function startDiscordWelcomeBot() {
             ? handleVoidInteraction(interaction)
             : isLivenessCommand || isHealthCommand
               ? handleHealthCommandInteraction(interaction)
+              : isLockdownCommand
+                ? handleLockdownInteraction(interaction)
         : handleGatewayOrderInteraction(interaction);
     handleInteraction.catch(error => {
       const isSlashCommand = isNewFamilyCommand || isDeleteFamilyCommand || isFamilyManagementCommand
         || isFamilyApplicationCommand || isTicketSetupCommand || isExtensionCommand || isManualBookingCommand || isCashCommand
-        || isVoidCommand || isLivenessCommand || isHealthCommand;
+        || isVoidCommand || isLivenessCommand || isHealthCommand || isLockdownCommand;
       const context = isSlashCommand ? "Discord-Slash-Command fehlgeschlagen" : "Discord-Button-Interaktion fehlgeschlagen";
       console.error(`${context}:`, error.message);
       if (interaction.isRepliable() && !interaction.replied) {
@@ -6254,6 +6327,8 @@ function startDiscordWelcomeBot() {
               ? `Kasse fehlgeschlagen: ${error.message}`
               : isVoidCommand
                 ? `Storno/Korrektur fehlgeschlagen: ${error.message}`
+                : isLockdownCommand
+                  ? `Lockdown fehlgeschlagen: ${error.message}`
             : "Der Bot konnte diese Bestellaktion nicht verarbeiten. Bitte die Bestellübersicht öffnen oder den Server-Admin informieren.";
         const reply = isSlashCommand
           ? (interaction.deferred ? interaction.editReply({ content }) : interaction.reply({ content, ephemeral: true }))
